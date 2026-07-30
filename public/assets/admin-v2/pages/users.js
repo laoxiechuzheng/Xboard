@@ -45,6 +45,7 @@ function userForm(user) {
     '<label>到期时间<input class="input" name="expired_at" type="datetime-local" value="' + localFromUnix(user.expired_at) + '"></label>' +
     '<label>余额（元）<input class="input" name="balance" type="number" step="0.01" value="' + esc(balance) + '"></label>' +
     '<label>设备限制（0 表示不限）<input class="input" name="device_limit" type="number" min="0" value="' + esc(user.device_limit || 0) + '"></label>' +
+    '<label class="full">邀请人邮箱（留空表示没有邀请人）<input class="input" name="invite_user_email" type="email" value="' + esc(user.invite_user?.email || '') + '"></label>' +
     '<label class="full">新密码（留空则不修改）<input class="input" name="password" type="password" minlength="8"></label>' +
     '<label class="full">备注<textarea class="input" name="remarks">' + esc(user.remarks || '') + '</textarea></label>' +
     '<label class="check"><input name="banned" type="checkbox" ' + (user.banned ? 'checked' : '') + '> 封禁此用户</label>' +
