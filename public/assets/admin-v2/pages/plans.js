@@ -28,7 +28,7 @@ function priceInputs(prices) {
 
 function preview(plan) {
   const firstPrice = periods.map(item => Number(plan.prices?.[item[0]]) || 0).find(value => value > 0) || 0;
-  return '<section class="plan-preview"><div class="plan-preview-head"><div><strong>前台套餐卡实时预览</strong><small>根据当前未保存的表单更新；不写入主题文件。</small></div><span>访客视角</span></div><article class="public-plan-card"><div><small data-preview-tag>推荐套餐</small><h3 data-preview-name>' + esc(plan.name || '套餐名称') + '</h3><p data-preview-content>' + esc(plan.content || '套餐介绍会显示在这里。') + '</p></div><div class="public-plan-data"><strong data-preview-traffic>' + Number(plan.transfer_enable || 0) + ' GB</strong><span>高速流量</span></div><div class="public-plan-price"><strong data-preview-price>¥' + firstPrice.toFixed(2) + '</strong><span data-preview-period>起</span></div><button type="button" class="button primary" disabled>立即订阅</button></article></section>';
+  return '<section class="plan-preview"><div class="plan-preview-head"><div><strong>前台套餐卡实时预览</strong><small>根据当前未保存的表单更新；不写入主题文件。</small></div><div class="preview-actions"><span>访客视角</span><button class="button secondary" type="button" data-open-published-front>打开已发布前台</button></div></div><article class="public-plan-card"><div><small data-preview-tag>推荐套餐</small><h3 data-preview-name>' + esc(plan.name || '套餐名称') + '</h3><p data-preview-content>' + esc(plan.content || '套餐介绍会显示在这里。') + '</p></div><div class="public-plan-data"><strong data-preview-traffic>' + Number(plan.transfer_enable || 0) + ' GB</strong><span>高速流量</span></div><div class="public-plan-price"><strong data-preview-price>¥' + firstPrice.toFixed(2) + '</strong><span data-preview-period>起</span></div><button type="button" class="button primary" disabled>立即订阅</button></article></section>';
 }
 
 function form(plan) {
@@ -50,6 +50,7 @@ function bindPreview(formNode) {
     card.querySelector('[data-preview-price]').textContent = '¥' + (prices[0] || 0).toFixed(2);
   };
   [name, content, traffic, ...priceInputs].forEach(input => input.addEventListener('input', refresh));
+  formNode.querySelector('[data-open-published-front]').addEventListener('click', () => window.open('/', '_blank', 'noopener'));
 }
 
 function payload(formNode, id) {

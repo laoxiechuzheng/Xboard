@@ -73,11 +73,41 @@ class ConfigController extends Controller
     {
         $key = $request->input('key');
         $configMappings = $this->getConfigMappings();
+        if ($request->boolean('safe')) {
+            $configMappings = $this->redactSensitiveValues($configMappings);
+        }
         if ($key && isset($configMappings[$key])) {
             return $this->success([$key => $configMappings[$key]]);
         }
 
         return $this->success($configMappings);
+    }
+
+    /**
+     * Allow alternate administrator interfaces to render configuration without
+     * transmitting persisted secrets into the browser. The regular fetch
+     * response remains unchanged for the existing administrator interface.
+     */
+    private function redactSensitiveValues(array $mappings): array
+    {
+        $sensitiveKeys = [
+            'server_token',
+            'email_password',
+            'telegram_bot_token',
+            'recaptcha_key',
+            'recaptcha_v3_secret_key',
+            'turnstile_secret_key',
+        ];
+
+        foreach ($mappings as $group => $values) {
+            foreach ($sensitiveKeys as $key) {
+                if (array_key_exists($key, $values)) {
+                    $mappings[$group][$key] = null;
+                }
+            }
+        }
+
+        return $mappings;
     }
 
     /**
