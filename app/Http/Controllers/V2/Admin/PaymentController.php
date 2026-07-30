@@ -41,7 +41,16 @@ class PaymentController extends Controller
     {
         try {
             $paymentService = new PaymentService($request->input('payment'), $request->input('id'));
-            return $this->success(collect($paymentService->form()));
+            $form = $paymentService->form();
+            if ($request->boolean('safe')) {
+                foreach ($form as $key => $field) {
+                    if (($field['type'] ?? '') === 'password') {
+                        $form[$key]['value'] = '';
+                        $form[$key]['sensitive'] = true;
+                    }
+                }
+            }
+            return $this->success(collect($form));
         } catch (\Exception $e) {
             return $this->fail([400, '支付方式不存在或未启用']);
         }
@@ -84,6 +93,7 @@ class PaymentController extends Controller
             if (!$payment)
                 return $this->fail([400202, '支付方式不存在']);
             try {
+                $params['config'] = $this->preserveEmptyPasswordConfig($payment, $params['config']);
                 $payment->update($params);
             } catch (\Exception $e) {
                 Log::error($e);
@@ -104,6 +114,39 @@ class PaymentController extends Controller
         if (!$payment)
             return $this->fail([400202, '支付方式不存在']);
         return $this->success($payment->delete());
+    }
+
+    /**
+     * A safe administrator form deliberately omits password values. When a
+     * password field is left blank during an edit, retain the stored value
+     * instead of silently clearing the gateway credential.
+     */
+    private function preserveEmptyPasswordConfig(Payment $payment, array $config): array
+    {
+        try {
+            $form = (new PaymentService($payment->payment, $payment->id))->form();
+        } catch (Exception $e) {
+            Log::warning('Unable to load payment form while preserving credentials', [
+                'payment_id' => $payment->id,
+                'error' => $e->getMessage(),
+            ]);
+            return $config;
+        }
+
+        $existing = is_array($payment->config) ? $payment->config : [];
+        foreach ($form as $key => $field) {
+            if (($field['type'] ?? '') !== 'password' || !array_key_exists($key, $config) || $config[$key] !== '') {
+                continue;
+            }
+
+            if (array_key_exists($key, $existing)) {
+                $config[$key] = $existing[$key];
+            } else {
+                unset($config[$key]);
+            }
+        }
+
+        return $config;
     }
 
 
