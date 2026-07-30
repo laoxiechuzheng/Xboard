@@ -5,6 +5,7 @@ import { renderPlans } from './pages/plans.js';
 import { renderNodes } from './pages/nodes.js';
 import { renderOrders } from './pages/orders.js';
 import { renderTickets } from './pages/tickets.js';
+import { renderDashboard } from './pages/dashboard.js';
 
 const app = document.querySelector('#app');
 
@@ -29,17 +30,17 @@ function renderLogin() {
 }
 
 function renderShell() {
-  const state = { page: 'users' };
+  const state = { page: 'dashboard' };
   app.innerHTML = '<div class="admin-shell"><aside><div class="brand"><span class="mark">X</span><span>' + esc(window.xboardAdmin?.title || 'Xboard') + '<small>自主后台 · 第一阶段</small></span></div>' +
-    '<nav><button class="nav-link active" data-page="users">用户管理</button><button class="nav-link" data-page="plans">套餐管理</button><button class="nav-link" data-page="nodes">节点管理</button><button class="nav-link" data-page="orders">订单管理</button><button class="nav-link" data-page="tickets">工单管理</button></nav><p class="sidebar-note">只显示已经实现且可写入的模块，不用空白页面充数。</p></aside>' +
-    '<main><header class="admin-topbar"><div><strong>用户管理</strong><span>所有保存请求均由现有管理员 API 校验</span></div><button class="button secondary" data-logout>退出登录</button></header><div id="page-root"></div></main></div>' +
+    '<nav><button class="nav-link active" data-page="dashboard">运营仪表盘</button><button class="nav-link" data-page="users">用户管理</button><button class="nav-link" data-page="plans">套餐管理</button><button class="nav-link" data-page="nodes">节点管理</button><button class="nav-link" data-page="orders">订单管理</button><button class="nav-link" data-page="tickets">工单管理</button></nav><p class="sidebar-note">已接入的页面均读写现有管理员接口；未实现的模块不会伪装成可用。</p></aside>' +
+    '<main><header class="admin-topbar"><div><strong>运营仪表盘</strong><span>所有保存请求均由现有管理员 API 校验</span></div><button class="button secondary" data-logout>退出登录</button></header><div id="page-root"></div></main></div>' +
     '<div id="admin-modal"></div><div id="admin-toast" class="toast"></div>';
   const root = app.querySelector('#page-root');
   const renderPage = page => {
     state.page = page;
     app.querySelectorAll('[data-page]').forEach(button => button.classList.toggle('active', button.dataset.page === page));
-    app.querySelector('.admin-topbar strong').textContent = page === 'plans' ? '套餐管理' : (page === 'nodes' ? '节点管理' : (page === 'orders' ? '订单管理' : (page === 'tickets' ? '工单管理' : '用户管理')));
-    (page === 'plans' ? renderPlans : (page === 'nodes' ? renderNodes : (page === 'orders' ? renderOrders : (page === 'tickets' ? renderTickets : renderUsers))))(root);
+    app.querySelector('.admin-topbar strong').textContent = page === 'dashboard' ? '运营仪表盘' : (page === 'plans' ? '套餐管理' : (page === 'nodes' ? '节点管理' : (page === 'orders' ? '订单管理' : (page === 'tickets' ? '工单管理' : '用户管理'))));
+    (page === 'dashboard' ? renderDashboard : (page === 'plans' ? renderPlans : (page === 'nodes' ? renderNodes : (page === 'orders' ? renderOrders : (page === 'tickets' ? renderTickets : renderUsers)))))(root);
   };
   app.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => renderPage(button.dataset.page)));
   app.querySelector('[data-logout]').addEventListener('click', () => { session.token = ''; render(); });

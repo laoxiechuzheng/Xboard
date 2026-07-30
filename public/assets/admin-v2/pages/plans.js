@@ -26,9 +26,30 @@ function priceInputs(prices) {
   return periods.map(item => '<label>' + item[1] + '（元）<input class="input" type="number" min="0" step="0.01" name="price_' + item[0] + '" value="' + esc(prices?.[item[0]] ?? '') + '"></label>').join('');
 }
 
+function preview(plan) {
+  const firstPrice = periods.map(item => Number(plan.prices?.[item[0]]) || 0).find(value => value > 0) || 0;
+  return '<section class="plan-preview"><div class="plan-preview-head"><div><strong>前台套餐卡实时预览</strong><small>根据当前未保存的表单更新；不写入主题文件。</small></div><span>访客视角</span></div><article class="public-plan-card"><div><small data-preview-tag>推荐套餐</small><h3 data-preview-name>' + esc(plan.name || '套餐名称') + '</h3><p data-preview-content>' + esc(plan.content || '套餐介绍会显示在这里。') + '</p></div><div class="public-plan-data"><strong data-preview-traffic>' + Number(plan.transfer_enable || 0) + ' GB</strong><span>高速流量</span></div><div class="public-plan-price"><strong data-preview-price>¥' + firstPrice.toFixed(2) + '</strong><span data-preview-period>起</span></div><button type="button" class="button primary" disabled>立即订阅</button></article></section>';
+}
+
 function form(plan) {
   plan = plan || {};
-  return '<div class="form-grid"><label>套餐名称<input class="input" name="name" required value="' + esc(plan.name || '') + '"></label><label>流量（GB）<input class="input" name="transfer_enable" type="number" min="1" required value="' + esc(plan.transfer_enable || '') + '"></label><label>节点分组 ID<input class="input" name="group_id" type="number" min="1" value="' + esc(plan.group_id || '') + '"></label><label>速度限制（Mbps，0 不限）<input class="input" name="speed_limit" type="number" min="0" value="' + esc(plan.speed_limit || 0) + '"></label><label>设备限制（0 不限）<input class="input" name="device_limit" type="number" min="0" value="' + esc(plan.device_limit || 0) + '"></label><label>容量限制（0 不限）<input class="input" name="capacity_limit" type="number" min="0" value="' + esc(plan.capacity_limit || 0) + '"></label><label class="full">套餐说明<textarea class="input" name="content">' + esc(plan.content || '') + '</textarea></label><label class="full">标签（逗号分隔）<input class="input" name="tags" value="' + esc(Array.isArray(plan.tags) ? plan.tags.join(', ') : '') + '"></label><div class="full"><h3 class="form-section">价格</h3><div class="form-grid">' + priceInputs(plan.prices) + '</div></div>' + (plan.id ? '<div class="full checks"><label class="check"><input type="checkbox" name="show" ' + (plan.show ? 'checked' : '') + '> 前台展示</label><label class="check"><input type="checkbox" name="sell" ' + (plan.sell ? 'checked' : '') + '> 允许购买</label><label class="check"><input type="checkbox" name="renew" ' + (plan.renew ? 'checked' : '') + '> 允许续费</label><label class="check danger-check"><input type="checkbox" name="force_update"> 同步流量/分组/限速/设备限制给全部现有用户</label></div>' : '') + '</div>';
+  return '<div class="form-grid"><label>套餐名称<input class="input" name="name" required value="' + esc(plan.name || '') + '"></label><label>流量（GB）<input class="input" name="transfer_enable" type="number" min="1" required value="' + esc(plan.transfer_enable || '') + '"></label><label>节点分组 ID<input class="input" name="group_id" type="number" min="1" value="' + esc(plan.group_id || '') + '"></label><label>速度限制（Mbps，0 不限）<input class="input" name="speed_limit" type="number" min="0" value="' + esc(plan.speed_limit || 0) + '"></label><label>设备限制（0 不限）<input class="input" name="device_limit" type="number" min="0" value="' + esc(plan.device_limit || 0) + '"></label><label>容量限制（0 不限）<input class="input" name="capacity_limit" type="number" min="0" value="' + esc(plan.capacity_limit || 0) + '"></label><label class="full">套餐说明<textarea class="input" name="content">' + esc(plan.content || '') + '</textarea></label><label class="full">标签（逗号分隔）<input class="input" name="tags" value="' + esc(Array.isArray(plan.tags) ? plan.tags.join(', ') : '') + '"></label><div class="full"><h3 class="form-section">价格</h3><div class="form-grid">' + priceInputs(plan.prices) + '</div></div>' + (plan.id ? '<div class="full checks"><label class="check"><input type="checkbox" name="show" ' + (plan.show ? 'checked' : '') + '> 前台展示</label><label class="check"><input type="checkbox" name="sell" ' + (plan.sell ? 'checked' : '') + '> 允许购买</label><label class="check"><input type="checkbox" name="renew" ' + (plan.renew ? 'checked' : '') + '> 允许续费</label><label class="check danger-check"><input type="checkbox" name="force_update"> 同步流量/分组/限速/设备限制给全部现有用户</label></div>' : '') + '</div>' + preview(plan);
+}
+
+function bindPreview(formNode) {
+  const name = formNode.elements.name;
+  const content = formNode.elements.content;
+  const traffic = formNode.elements.transfer_enable;
+  const priceInputs = periods.map(item => formNode.elements['price_' + item[0]]).filter(Boolean);
+  const refresh = () => {
+    const prices = priceInputs.map(input => Number(input.value) || 0).filter(value => value > 0);
+    const card = formNode.querySelector('.plan-preview');
+    card.querySelector('[data-preview-name]').textContent = name.value.trim() || '套餐名称';
+    card.querySelector('[data-preview-content]').textContent = content.value.trim() || '套餐介绍会显示在这里。';
+    card.querySelector('[data-preview-traffic]').textContent = (Number(traffic.value) || 0) + ' GB';
+    card.querySelector('[data-preview-price]').textContent = '¥' + (prices[0] || 0).toFixed(2);
+  };
+  [name, content, traffic, ...priceInputs].forEach(input => input.addEventListener('input', refresh));
 }
 
 function payload(formNode, id) {
@@ -65,6 +86,7 @@ function edit(root, plan) {
     if (exists) { const flags = getForm(formNode); await api('plan/update', { method: 'POST', body: { id: plan.id, show: flags.show, sell: flags.sell, renew: flags.renew } }); }
     toast(exists ? '套餐已保存' : '套餐已创建'); await load(root);
   }, exists && plan.users_count ? '不勾选同步更新时，保存套餐不会修改已有用户。' : '空价格表示不提供这个购买周期。');
+  bindPreview(document.querySelector('#admin-modal [data-form]'));
 }
 
 export function renderPlans(root) { load(root).catch(error => { root.innerHTML = '<div class="error-state">' + esc(error.message) + '</div>'; }); }
