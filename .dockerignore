@@ -15,10 +15,11 @@ Homestead.yaml
 npm-debug.log
 yarn-error.log
 composer.phar
-composer.lock
 yarn.lock
 docker-compose.yml
 .DS_Store
+/.git
+/.docker/.data
 /docker
 storage/laravels.conf
 storage/laravels.pid

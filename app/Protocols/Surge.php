@@ -18,6 +18,7 @@ class Surge extends AbstractProtocol
         Server::TYPE_VMESS,
         Server::TYPE_TROJAN,
         Server::TYPE_HYSTERIA,
+        Server::TYPE_TUIC,        // 新增
         Server::TYPE_ANYTLS,
         Server::TYPE_SOCKS,
         Server::TYPE_HTTP,
@@ -63,6 +64,11 @@ class Surge extends AbstractProtocol
                 $proxies .= self::buildHysteria($item['password'], $item);
                 $proxyGroup .= $item['name'] . ', ';
             }
+            // 新增 TUIC 处理
+            if ($item['type'] === Server::TYPE_TUIC) {
+                $proxies .= self::buildTuic($item['password'], $item);
+                $proxyGroup .= $item['name'] . ', ';
+            }
             if ($item['type'] === Server::TYPE_ANYTLS) {
                 $proxies .= self::buildAnyTLS($item['password'], $item);
                 $proxyGroup .= $item['name'] . ', ';
@@ -76,7 +82,6 @@ class Surge extends AbstractProtocol
                 $proxyGroup .= $item['name'] . ', ';
             }
         }
-
 
         $config = subscribe_template('surge');
 
@@ -102,7 +107,6 @@ class Surge extends AbstractProtocol
             ->header('content-type', 'application/octet-stream')
             ->header('content-disposition', "attachment;filename*=UTF-8''" . rawurlencode($appName) . ".conf");
     }
-
 
     public static function buildShadowsocks($password, $server)
     {
@@ -242,7 +246,7 @@ class Surge extends AbstractProtocol
             "{$server['port']}",
             "password={$password}",
             $protocol_settings['tls']['server_name'] ? "sni={$protocol_settings['tls']['server_name']}" : "",
-            // 'tfo=true', 
+            // 'tfo=true',
             'udp-relay=true'
         ];
         if (data_get($protocol_settings, 'bandwidth.up')) {
@@ -254,6 +258,46 @@ class Surge extends AbstractProtocol
         if (data_get($protocol_settings, 'tls.allow_insecure')) {
             $config[] = !!data_get($protocol_settings, 'tls.allow_insecure') ? 'skip-cert-verify=true' : 'skip-cert-verify=false';
         }
+        $config = array_filter($config);
+        $uri = implode(',', $config);
+        $uri .= "\r\n";
+        return $uri;
+    }
+
+    // 参考文档: https://manual.nssurge.com/policy/proxy.html
+    public static function buildTuic($password, $server)
+    {
+        $protocol_settings = $server['protocol_settings'];
+        if (data_get($protocol_settings, 'version') != 5) {
+            return '';
+        }
+        $config = [
+            "{$server['name']} = tuic-v5",
+            "{$server['host']}",
+            "{$server['port']}",
+            "password={$password}",
+            "uuid={$password}",
+        ];
+
+        // sni
+        if ($sni = data_get($protocol_settings, 'tls.server_name')) {
+            $config[] = "sni={$sni}";
+        }
+
+        // skip-cert-verify
+        if (data_get($protocol_settings, 'tls.allow_insecure')) {
+            $config[] = 'skip-cert-verify=true';
+        }
+
+        // alpn
+        $alpn = data_get($protocol_settings, 'alpn', []);
+        if (!empty($alpn) && is_array($alpn)) {
+            $config[] = "alpn=" . implode(',', $alpn);
+        }
+
+        // udp-relay
+        $config[] = 'udp-relay=true';
+
         $config = array_filter($config);
         $uri = implode(',', $config);
         $uri .= "\r\n";

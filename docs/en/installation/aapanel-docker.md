@@ -65,8 +65,8 @@ cd /www/wwwroot/your-domain
 chattr -i .user.ini
 rm -rf .htaccess 404.html 502.html index.html .user.ini
 
-# Clone the compose branch
-git clone -b compose --depth 1 https://github.com/cedar2025/Xboard.git ./
+# Clone this repository
+git clone --depth 1 https://github.com/laoxiechuzheng/Xboard.git ./
 
 # Prepare configuration file
 cp compose.host.sample.yaml compose.yaml
@@ -122,7 +122,7 @@ The container always runs `php artisan xboard:update` (migrate + plugin install 
 ## Troubleshooting
 
 If you encounter any issues during installation or operation, please check:
-1. **Empty Admin Dashboard**: If the admin panel is blank, run `git submodule update --init --recursive --force` to restore the theme files.
+1. **Empty Admin Dashboard**: Admin assets are vendored in this repository. Rebuild or redeploy the current image to refresh them.
 2. System requirements are met
 3. All required ports are available
 3. Docker services are running properly

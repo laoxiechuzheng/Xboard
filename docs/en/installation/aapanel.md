@@ -74,7 +74,7 @@ chattr -i .user.ini
 rm -rf .htaccess 404.html 502.html index.html .user.ini
 
 # Clone repository
-git clone https://github.com/cedar2025/Xboard.git ./
+git clone https://github.com/laoxiechuzheng/Xboard.git ./
 
 # Install dependencies
 sh init.sh
@@ -169,7 +169,7 @@ sh update.sh
 ## Troubleshooting
 
 ### Common Issues
-1. **Empty Admin Dashboard**: If the admin panel is blank, run `git submodule update --init --recursive --force` to restore the theme files.
+1. **Empty Admin Dashboard**: Admin assets are vendored in this repository. Rebuild or redeploy the current image to refresh them.
 2. Changes to admin path require service restart to take effect
 3. Any code changes after enabling Octane require restart to take effect
 3. When PHP extension installation fails, check if PHP version is correct

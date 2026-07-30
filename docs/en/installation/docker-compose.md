@@ -15,9 +15,9 @@ systemctl start docker
 
 ### 2. Deployment Steps
 
-1. Clone the `compose` branch (it ships `compose.sample.yaml` and the other `compose.*.sample.yaml` variants):
+1. Clone this repository (it ships `compose.sample.yaml` and the other `compose.*.sample.yaml` variants):
    ```bash
-   git clone -b compose --depth 1 https://github.com/cedar2025/Xboard
+   git clone --depth 1 https://github.com/laoxiechuzheng/Xboard.git
    cd Xboard
    cp compose.sample.yaml compose.yaml
    ```
@@ -37,7 +37,7 @@ docker compose run -it --rm \
 docker compose run -it --rm xboard php artisan xboard:install
 ```
 > Please save the admin dashboard URL, username, and password shown after installation
-> The repository ships **four** compose templates in the `compose` branch — pick the one matching your setup, copy it to `compose.yaml`, then run the install command:
+> The repository ships **four** compose templates in the `master` branch — pick the one matching your setup, copy it to `compose.yaml`, then run the install command:
 >
 > | File | Network | When to use |
 > |------|---------|-------------|
@@ -80,4 +80,4 @@ The container always runs `php artisan xboard:update` (migrate + plugin install 
 
 - If you need to use MySQL, please install it separately and redeploy
 - Code changes require service restart to take effect
-- You can configure Nginx reverse proxy to use port 80 
+- You can configure Nginx reverse proxy to use port 80
