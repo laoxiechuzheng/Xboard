@@ -6,12 +6,13 @@
 
 - `local-customizations-only`：提交 `bab8864`。仅包含从本地归档迁入的公开自定义文件，以及消除 `cedar2025/Xboard` 上游构建/管理端子模块依赖的改动。
 - `before-admin-v2-removal`：独立后台早期版本的额外安全锚点。
+- `admin-v2-complete`：当前完整独立后台版本的锚点。
 
 两个标签均已推送到 `laoxiechuzheng/Xboard`，不要删除。
 
 ## 从公开 master 安全移除后台
 
-若确认要移除从 `local-customizations-only` 之后的所有独立后台提交，在干净工作树执行：
+若已核对 `local-customizations-only..HEAD` 中全部都是独立后台提交，才可在干净工作树执行：
 
 ```powershell
 git fetch origin --tags
@@ -43,3 +44,5 @@ git log --oneline local-customizations-only..HEAD
 ```
 
 若 Git 报告冲突，停止并逐个解决；不要用 `reset --hard` 或强推来跳过冲突。
+
+如果未来在独立后台提交之后又合入了其他功能，不要对整个范围执行回退。先使用上述 `git log` 核对，并只针对明确属于独立后台的提交逐个逆序 `git revert`。
