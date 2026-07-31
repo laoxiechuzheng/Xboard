@@ -54,6 +54,11 @@ class Ticket extends Model
     {
         return $this->hasMany(TicketMessage::class, 'ticket_id', 'id');
     }
+
+    public function lastReplyUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'last_reply_user_id', 'id');
+    }
     
     // 即将删除
     public function message(): HasMany

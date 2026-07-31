@@ -23,6 +23,10 @@ function metric(label, value, note, change) {
   return '<article class="metric-card"><span>' + esc(label) + '</span><strong>' + esc(value) + '</strong><small>' + esc(note) + (change === undefined ? '' : ' <b class="' + trend(change) + '">' + esc(percent(change)) + '</b>') + '</small></article>';
 }
 
+function navigate(page, options) {
+  document.querySelector('#app').dispatchEvent(new CustomEvent('admin-v2:navigate', { bubbles: true, detail: { page, options } }));
+}
+
 function rank(title, rows) {
   if (!rows.length) return '<section class="panel dashboard-panel"><h2>' + esc(title) + '</h2><div class="empty compact">暂无统计记录</div></section>';
   const max = Math.max(...rows.map(row => number(row.value)), 1);
@@ -40,9 +44,11 @@ function render(root, stats, nodeRank, userRank) {
     metric('本月佣金已发', money(stats.currentMonthCommissionPayout), '上月 ' + money(stats.lastMonthCommissionPayout), stats.commissionGrowth) +
     metric('本月新增用户', String(number(stats.currentMonthNewUsers)), '总用户 ' + number(stats.totalUsers), stats.userGrowth) +
     '</section>' +
-    '<section class="dashboard-split"><section class="panel dashboard-panel"><h2>运行与待办</h2><div class="health-grid"><div><span>有效订阅用户</span><strong>' + number(stats.activeUsers) + '</strong><small>在线用户 ' + number(stats.onlineUsers) + ' · 在线设备 ' + number(stats.onlineDevices) + '</small></div><div><span>在线节点</span><strong>' + number(stats.onlineNodes) + '</strong><small>节点在线状态以服务端上报为准</small></div><div><span>待处理工单</span><strong>' + number(stats.ticketPendingTotal) + '</strong><small>请在工单管理中回复或关闭</small></div><div><span>待结算佣金订单</span><strong>' + number(stats.commissionPendingTotal) + '</strong><small>由现有佣金结算任务处理</small></div></div></section><section class="panel dashboard-panel"><h2>流量概览</h2><dl class="traffic-overview"><div><dt>今日</dt><dd>' + bytes(todayTraffic.total) + '</dd><small>上行 ' + bytes(todayTraffic.upload) + ' · 下行 ' + bytes(todayTraffic.download) + '</small></div><div><dt>本月</dt><dd>' + bytes(monthTraffic.total) + '</dd><small>上行 ' + bytes(monthTraffic.upload) + ' · 下行 ' + bytes(monthTraffic.download) + '</small></div><div><dt>累计</dt><dd>' + bytes(totalTraffic.total) + '</dd><small>上行 ' + bytes(totalTraffic.upload) + ' · 下行 ' + bytes(totalTraffic.download) + '</small></div></dl></section></section>' +
+    '<section class="dashboard-split"><section class="panel dashboard-panel"><h2>运行与待办</h2><div class="health-grid"><div><span>有效订阅用户</span><strong>' + number(stats.activeUsers) + '</strong><small>在线用户 ' + number(stats.onlineUsers) + ' · 在线设备 ' + number(stats.onlineDevices) + '</small></div><div><span>在线节点</span><strong>' + number(stats.onlineNodes) + '</strong><small>节点在线状态以服务端上报为准</small></div><button class="health-action" type="button" data-open-tickets><span>待处理工单</span><strong>' + number(stats.ticketPendingTotal) + '</strong><small>打开“已开启 · 待管理员回复”列表</small></button><button class="health-action" type="button" data-open-commissions><span>待核算佣金订单</span><strong>' + number(stats.commissionPendingTotal) + '</strong><small>打开待核算佣金订单</small></button></div></section><section class="panel dashboard-panel"><h2>流量概览</h2><dl class="traffic-overview"><div><dt>今日</dt><dd>' + bytes(todayTraffic.total) + '</dd><small>上行 ' + bytes(todayTraffic.upload) + ' · 下行 ' + bytes(todayTraffic.download) + '</small></div><div><dt>本月</dt><dd>' + bytes(monthTraffic.total) + '</dd><small>上行 ' + bytes(monthTraffic.upload) + ' · 下行 ' + bytes(monthTraffic.download) + '</small></div><div><dt>累计</dt><dd>' + bytes(totalTraffic.total) + '</dd><small>上行 ' + bytes(totalTraffic.upload) + ' · 下行 ' + bytes(totalTraffic.download) + '</small></div></dl></section></section>' +
     '<section class="dashboard-split">' + rank('近 7 日节点流量排行', nodeRank) + rank('近 7 日用户流量排行', userRank) + '</section>';
   root.querySelector('[data-refresh]').addEventListener('click', () => load(root));
+  root.querySelector('[data-open-tickets]').addEventListener('click', () => navigate('tickets', { status: 0, replyStatus: 0 }));
+  root.querySelector('[data-open-commissions]').addEventListener('click', () => navigate('commissions', { commissionStatus: 0 }));
 }
 
 export async function loadDashboard(root) {

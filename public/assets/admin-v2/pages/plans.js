@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { esc, getForm } from '../ui.js';
+import { esc, getForm, sanitizeHtml } from '../ui.js';
 
 const periods = [['monthly','月付'],['quarterly','季付'],['half_yearly','半年付'],['yearly','年付'],['two_yearly','两年付'],['three_yearly','三年付'],['onetime','一次性'],['reset_traffic','重置流量']];
 
@@ -28,7 +28,7 @@ function priceInputs(prices) {
 
 function preview(plan) {
   const firstPrice = periods.map(item => Number(plan.prices?.[item[0]]) || 0).find(value => value > 0) || 0;
-  return '<section class="plan-preview"><div class="plan-preview-head"><div><strong>前台套餐卡实时预览</strong><small>根据当前未保存的表单更新；不写入主题文件。</small></div><div class="preview-actions"><span>访客视角</span><button class="button secondary" type="button" data-open-published-front>打开已发布前台</button></div></div><article class="public-plan-card"><div><small data-preview-tag>推荐套餐</small><h3 data-preview-name>' + esc(plan.name || '套餐名称') + '</h3><p data-preview-content>' + esc(plan.content || '套餐介绍会显示在这里。') + '</p></div><div class="public-plan-data"><strong data-preview-traffic>' + Number(plan.transfer_enable || 0) + ' GB</strong><span>高速流量</span></div><div class="public-plan-price"><strong data-preview-price>¥' + firstPrice.toFixed(2) + '</strong><span data-preview-period>起</span></div><button type="button" class="button primary" disabled>立即订阅</button></article></section>';
+  return '<section class="plan-preview"><div class="plan-preview-head"><div><strong>前台套餐卡实时 HTML 预览</strong><small>根据当前未保存的表单更新；危险标签、事件属性和 javascript: 链接会被移除。</small></div><div class="preview-actions"><span>访客视角</span><button class="button secondary" type="button" data-open-published-front>打开已发布前台</button></div></div><article class="public-plan-card"><div><small data-preview-tag>推荐套餐</small><h3 data-preview-name>' + esc(plan.name || '套餐名称') + '</h3><div class="html-preview-content" data-preview-content>' + sanitizeHtml(plan.content || '<p>套餐介绍会显示在这里。</p>') + '</div></div><div class="public-plan-data"><strong data-preview-traffic>' + Number(plan.transfer_enable || 0) + ' GB</strong><span>高速流量</span></div><div class="public-plan-price"><strong data-preview-price>¥' + firstPrice.toFixed(2) + '</strong><span data-preview-period>起</span></div><button type="button" class="button primary" disabled>立即订阅</button></article></section>';
 }
 
 function form(plan) {
@@ -45,7 +45,7 @@ function bindPreview(formNode) {
     const prices = priceInputs.map(input => Number(input.value) || 0).filter(value => value > 0);
     const card = formNode.querySelector('.plan-preview');
     card.querySelector('[data-preview-name]').textContent = name.value.trim() || '套餐名称';
-    card.querySelector('[data-preview-content]').textContent = content.value.trim() || '套餐介绍会显示在这里。';
+    card.querySelector('[data-preview-content]').innerHTML = sanitizeHtml(content.value.trim() || '<p>套餐介绍会显示在这里。</p>');
     card.querySelector('[data-preview-traffic]').textContent = (Number(traffic.value) || 0) + ' GB';
     card.querySelector('[data-preview-price]').textContent = '¥' + (prices[0] || 0).toFixed(2);
   };

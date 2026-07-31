@@ -1,7 +1,7 @@
 import { api, paged } from '../api.js';
 import { bytes, date, esc, getForm, localFromUnix, unixFromLocal } from '../ui.js';
 
-const state = { current: 1, query: '', selected: new Set(), plans: [] };
+const state = { current: 1, searchField: 'email', query: '', planId: '', banned: '', expiry: '', role: '', selected: new Set(), plans: [] };
 const GIB = 1024 ** 3;
 
 function number(value) {
@@ -100,11 +100,19 @@ function renderRows(rows) {
 async function load(root) {
   root.innerHTML = '<div class="loading">正在加载用户…</div>';
   const payload = { current: state.current, pageSize: 20 };
-  if (state.query) payload.filter = [{ id: 'email', value: state.query }];
+  const filters = [];
+  if (state.query) filters.push({ id: state.searchField, value: state.searchField === 'id' ? 'eq:' + state.query : state.query });
+  if (state.planId) filters.push({ id: 'plan_id', value: 'eq:' + state.planId });
+  if (state.banned !== '') filters.push({ id: 'banned', value: 'eq:' + state.banned });
+  if (state.expiry) filters.push({ id: 'subscription_status', value: state.expiry });
+  if (state.role === 'admin') filters.push({ id: 'is_admin', value: 'eq:1' });
+  if (state.role === 'staff') filters.push({ id: 'is_staff', value: 'eq:1' });
+  if (filters.length) payload.filter = filters;
   const values = await Promise.all([api('user/fetch', { method: 'POST', body: payload }), api('plan/fetch')]);
   const result = paged(values[0]);
   state.plans = Array.isArray(values[1]) ? values[1] : [];
-  root.innerHTML = '<section class="page-heading"><div><h1>用户管理</h1><p>创建、编辑、封禁、重置订阅、删除与邮件发送都会调用现有管理员接口。</p></div><button class="button primary" data-create>新建用户</button></section><section class="panel"><div class="toolbar"><input class="input" data-search placeholder="按邮箱搜索" value="' + esc(state.query) + '"><button class="button secondary" data-search-button>搜索</button><span class="count">共 ' + result.total + ' 位用户</span><span class="toolbar-spacer"></span><button class="button secondary" data-ban ' + (state.selected.size ? '' : 'disabled') + '>封禁已选（' + state.selected.size + '）</button><button class="button secondary" data-mail ' + (state.selected.size ? '' : 'disabled') + '>发邮件</button></div>' + renderRows(result.rows) + '<footer class="pagination"><button class="button secondary" data-prev ' + (state.current <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + state.current + ' 页</span><button class="button secondary" data-next ' + (result.rows.length < 20 ? 'disabled' : '') + '>下一页</button></footer></section>';
+  const searchLabels = { email: '邮箱（支持模糊匹配）', token: '订阅 Token', id: '用户 ID' };
+  root.innerHTML = '<section class="page-heading"><div><h1>用户管理</h1><p>支持邮箱模糊查询、Token、用户 ID、套餐和账号状态组合筛选。</p></div><button class="button primary" data-create>新建用户</button></section><section class="panel"><form class="filter-toolbar" data-filter-form><label>查询字段<select class="input" name="search_field"><option value="email" '+(state.searchField==='email'?'selected':'')+'>邮箱（模糊）</option><option value="token" '+(state.searchField==='token'?'selected':'')+'>订阅 Token</option><option value="id" '+(state.searchField==='id'?'selected':'')+'>用户 ID</option></select></label><label class="filter-grow">查询内容<input class="input" name="query" placeholder="'+searchLabels[state.searchField]+'" value="'+esc(state.query)+'"></label><label>订阅套餐<select class="input" name="plan_id"><option value="">全部套餐</option>'+state.plans.map(plan=>'<option value="'+plan.id+'" '+(String(state.planId)===String(plan.id)?'selected':'')+'>'+esc(plan.name)+'</option>').join('')+'</select></label><label>账号状态<select class="input" name="banned"><option value="">全部状态</option><option value="0" '+(state.banned==='0'?'selected':'')+'>正常</option><option value="1" '+(state.banned==='1'?'selected':'')+'>已封禁</option></select></label><label>订阅有效期<select class="input" name="expiry"><option value="">全部</option><option value="active" '+(state.expiry==='active'?'selected':'')+'>未过期</option><option value="expired" '+(state.expiry==='expired'?'selected':'')+'>已过期</option></select></label><label>身份<select class="input" name="role"><option value="">全部身份</option><option value="admin" '+(state.role==='admin'?'selected':'')+'>管理员</option><option value="staff" '+(state.role==='staff'?'selected':'')+'>员工</option></select></label><div class="filter-actions"><button class="button primary" type="submit">应用筛选</button><button class="button secondary" type="button" data-clear-filter>清空</button></div></form><div class="toolbar batch-toolbar"><span class="count">共 ' + result.total + ' 位用户</span><span class="toolbar-spacer"></span><button class="button secondary" data-ban ' + (state.selected.size ? '' : 'disabled') + '>封禁已选（' + state.selected.size + '）</button><button class="button secondary" data-mail ' + (state.selected.size ? '' : 'disabled') + '>发邮件</button></div>' + renderRows(result.rows) + '<footer class="pagination"><button class="button secondary" data-prev ' + (state.current <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + state.current + ' 页</span><button class="button secondary" data-next ' + (result.rows.length < 20 ? 'disabled' : '') + '>下一页</button></footer></section>';
   bind(root, result.rows);
 }
 
@@ -122,8 +130,8 @@ function showTraffic(user) {
 }
 
 function bind(root, rows) {
-  root.querySelector('[data-search-button]').addEventListener('click', () => { state.query = root.querySelector('[data-search]').value.trim(); state.current = 1; load(root).catch(showError); });
-  root.querySelector('[data-search]').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); root.querySelector('[data-search-button]').click(); } });
+  root.querySelector('[data-filter-form]').addEventListener('submit', event => { event.preventDefault(); const data=getForm(event.currentTarget); state.searchField=data.search_field; state.query=data.query.trim(); state.planId=data.plan_id === '' ? '' : String(data.plan_id); state.banned=data.banned === '' ? '' : String(data.banned); state.expiry=data.expiry; state.role=data.role; state.current=1; load(root).catch(showError); });
+  root.querySelector('[data-clear-filter]').addEventListener('click', () => { state.searchField='email'; state.query=''; state.planId=''; state.banned=''; state.expiry=''; state.role=''; state.current=1; load(root).catch(showError); });
   root.querySelector('[data-create]').addEventListener('click', () => createUser(root));
   root.querySelector('[data-prev]').addEventListener('click', () => { state.current -= 1; load(root).catch(showError); });
   root.querySelector('[data-next]').addEventListener('click', () => { state.current += 1; load(root).catch(showError); });

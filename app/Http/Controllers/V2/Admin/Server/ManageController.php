@@ -52,6 +52,31 @@ class ManageController extends Controller
     public function save(ServerSave $request)
     {
         $params = $request->validated();
+        $serverId = $request->integer('id');
+        $parentId = $params['parent_id'] ?? null;
+        if ($parentId) {
+            $parent = Server::find($parentId);
+            if (!$parent) {
+                return $this->fail([422, '父节点不存在']);
+            }
+            if ($serverId && $parent->id === $serverId) {
+                return $this->fail([422, '节点不能选择自己作为父节点']);
+            }
+            $visitedParentIds = [];
+            while ($serverId && $parent->parent_id) {
+                if (in_array($parent->id, $visitedParentIds, true)) {
+                    return $this->fail([422, '现有父子节点关系中存在循环，请先修复']);
+                }
+                $visitedParentIds[] = $parent->id;
+                if ((int) $parent->parent_id === $serverId) {
+                    return $this->fail([422, '父子节点关系不能形成循环']);
+                }
+                $parent = Server::find($parent->parent_id);
+                if (!$parent) {
+                    break;
+                }
+            }
+        }
         if ($request->input('id')) {
             $server = Server::find($request->input('id'));
             if (!$server) {

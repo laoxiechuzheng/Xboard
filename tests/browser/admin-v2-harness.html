@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin V2 Browser Harness</title>
+  <link rel="stylesheet" href="/public/assets/admin-v2/app.css">
+  <script>
+    window.xboardAdmin = { title: 'Xboard Test', securePath: 'mock-admin' };
+    sessionStorage.setItem('xboard.admin-v2.token', 'mock-token');
+    window.mockRequests = [];
+    const plans = [{ id: 8, name: '旗舰套餐', transfer_enable: 100, group_id: 1, speed_limit: 0, device_limit: 5, capacity_limit: 0, users_count: 2, active_users_count: 2, show: true, sell: true, renew: true, content: '<p><strong>高速线路</strong><br><img src="https://example.com/plan.png" onerror="window.xss=1"><script>window.xss=2<\/script></p>', prices: { monthly: 19.9, yearly: 199 } }];
+    const users = [{ id: 15, email: 'alice@example.com', token: 'token-abc-123', plan_id: 8, plan: plans[0], transfer_enable: 107374182400, u: 5368709120, d: 10737418240, expired_at: 1999999999, banned: false, is_admin: false, is_staff: false }];
+    const order = { id: 31, trade_no: '202607310001', user_id: 15, user: { id: 15, email: 'alice@example.com' }, plan_id: 8, plan: { id: 8, name: '旗舰套餐' }, payment_id: 2, payment: { id: 2, name: '支付宝', payment: 'Alipay', enable: true }, period: '月付', total_amount: 1990, handling_amount: 20, discount_amount: 100, balance_amount: 50, surplus_amount: 0, type: 1, status: 3, created_at: 1785427200, updated_at: 1785427300, paid_at: 1785427250, callback_no: 'gateway-9988', coupon_id: 4, invite_user_id: 7, invite_user: { id: 7, email: 'invite@example.com' }, commission_status: 0, commission_rate: 10, commission_balance: 199, actual_commission_balance: 0, commission_auto_check: 1, commission_log: [], surplus_orders: [] };
+    const tickets = [{ id: 41, user_id: 15, user: users[0], subject: '无法连接香港节点', status: 0, reply_status: 0, last_reply_user_id: 15, last_reply_user: { id: 15, email: 'alice@example.com', is_admin: false, is_staff: false }, updated_at: 1785427400 }];
+    const ticketDetail = { ...tickets[0], messages: [{ id: 1, user_id: 15, user: { id: 15, email: 'alice@example.com' }, message: '连接后没有网络', is_from_user: true, is_from_admin: false, created_at: 1785427200 }, { id: 2, user_id: 1, user: { id: 1, email: 'admin@example.com', is_admin: true }, message: '请更新订阅后重试', is_from_user: false, is_from_admin: true, created_at: 1785427300 }] };
+    const nodes = [{ id: 1, name: '香港入口', type: 'vless', host: 'hk.example.com', port: 443, server_port: 8443, rate: 1, enabled: true, show: true, u: 1048576, d: 2097152, group_ids: [1], route_ids: [], groups: [{ id: 1, name: '高级组' }], parent_id: null, parent: null, protocol_settings: { tls: 2, network: 'ws', flow: 'xtls-rprx-vision', tls_settings: { server_name: 'hk.example.com' }, reality_settings: { server_name: 'www.microsoft.com', server_port: 443 } } }, { id: 2, name: '香港备用', type: 'vless', host: 'hk-backup.example.com', port: 443, server_port: 8444, rate: 1, enabled: true, show: true, u: 0, d: 0, group_ids: [1], route_ids: [], groups: [{ id: 1, name: '高级组' }], parent_id: 1, parent: { id: 1, name: '香港入口' }, protocol_settings: { tls: 2, network: 'ws' } }];
+    const config = { site: { app_name: '测试站点', app_url: 'https://example.com', app_description: '测试描述', subscribe_url: '', logo: '', force_https: true, stop_register: false, try_out_plan_id: 8, try_out_hour: 24, tos_url: 'https://example.com/tos', currency: 'CNY', currency_symbol: '¥', ticket_must_wait_reply: true }, subscribe: { plan_change_enable: true, reset_traffic_method: 1, surplus_enable: true, new_order_event_id: 0, renew_order_event_id: 1, change_order_event_id: 0, show_info_to_server_enable: true, show_protocol_to_server_enable: true, default_remind_expire: true, default_remind_traffic: true, subscribe_path: 's' }, server: { server_token: null, server_pull_interval: 60, server_push_interval: 60, device_limit_mode: 1, server_ws_enable: true, server_ws_url: '' }, invite: { invite_force: false, invite_commission: 10, invite_gen_limit: 5, invite_never_expire: false, commission_first_time_enable: true, commission_auto_check_enable: true, commission_withdraw_limit: 100, commission_withdraw_method: ['支付宝','USDT'], withdraw_close_enable: false, commission_distribution_enable: false, commission_distribution_l1: 50, commission_distribution_l2: 30, commission_distribution_l3: 20 }, safe: { secure_path: 'mock-admin', email_verify: true, safe_mode_enable: false, email_whitelist_enable: false, email_whitelist_suffix: ['gmail.com'], email_gmail_limit_enable: true, captcha_enable: false, captcha_type: 'turnstile', recaptcha_key: null, recaptcha_site_key: '', recaptcha_v3_secret_key: null, recaptcha_v3_site_key: '', recaptcha_v3_score_threshold: 0.5, turnstile_secret_key: null, turnstile_site_key: '', register_limit_by_ip_enable: true, register_limit_count: 3, register_limit_expire: 60, password_limit_enable: true, password_limit_count: 5, password_limit_expire: 60, recaptcha_enable: false }, email: { email_host: 'smtp.example.com', email_port: 587, email_username: 'mailer', email_password: null, email_encryption: 'tls', email_from_address: 'mail@example.com', remind_mail_enable: true }, telegram: { telegram_bot_enable: false, telegram_bot_token: null, telegram_webhook_url: '', telegram_discuss_link: '' }, frontend: { frontend_theme: 'Xboard', frontend_theme_sidebar: 'light', frontend_theme_header: 'dark', frontend_theme_color: 'default', frontend_background_url: '' }, app: { windows_version: '1.0', windows_download_url: 'https://example.com/windows', macos_version: '1.0', macos_download_url: 'https://example.com/macos', android_version: '1.0', android_download_url: 'https://example.com/android' }, subscribe_template: { subscribe_template_singbox: '{}', subscribe_template_clash: 'proxies: []', subscribe_template_clashmeta: 'proxies: []', subscribe_template_stash: '', subscribe_template_surge: '', subscribe_template_surfboard: '' } };
+    function response(data) { return Promise.resolve(new Response(JSON.stringify({ code: 0, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })); }
+    window.fetch = async (input, options = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      const path = url.pathname.split('/mock-admin/')[1] || '';
+      let body = null; try { body = options.body ? JSON.parse(options.body) : null; } catch {}
+      window.mockRequests.push({ path, search: url.search, method: options.method || 'GET', body });
+      if (path === 'stat/getStats') return response({ todayIncome: 5600, dayIncomeGrowth: 12, currentMonthIncome: 98600, monthIncomeGrowth: 8, currentMonthCommissionPayout: 3500, lastMonthCommissionPayout: 3000, commissionGrowth: 4, currentMonthNewUsers: 21, totalUsers: 150, userGrowth: 10, activeUsers: 110, onlineUsers: 18, onlineDevices: 26, onlineNodes: 7, ticketPendingTotal: 1, commissionPendingTotal: 1, todayTraffic: { upload: 1073741824, download: 2147483648, total: 3221225472 }, monthTraffic: { upload: 10737418240, download: 21474836480, total: 32212254720 }, totalTraffic: { upload: 107374182400, download: 214748364800, total: 322122547200 } });
+      if (path.startsWith('stat/getTrafficRank')) return response([{ id: 1, name: '香港入口', value: 1073741824, change: 5 }]);
+      if (path === 'plan/fetch') return response(plans);
+      if (path === 'user/fetch') return response({ data: users, total: users.length });
+      if (path === 'order/fetch') return response({ data: [order], total: 1 });
+      if (path === 'order/detail') return response(order);
+      if (path.startsWith('ticket/fetch')) return response(url.searchParams.has('id') ? ticketDetail : { data: tickets, total: tickets.length });
+      if (path === 'server/manage/getNodes') return response(nodes);
+      if (path === 'server/group/fetch') return response([{ id: 1, name: '高级组' }]);
+      if (path === 'server/route/fetch') return response([{ id: 1, remarks: '国内直连' }]);
+      if (path === 'server/machine/fetch') return response([{ id: 1, name: 'HK Machine' }]);
+      if (path === 'notice/fetch') return response([{ id: 1, title: '维护公告', content: plans[0].content, tags: ['维护'], popup: true, show: true, updated_at: 1785427200 }]);
+      if (path === 'knowledge/fetch') return response([]);
+      if (path === 'knowledge/getCategory') return response(['帮助']);
+      if (path === 'config/fetch') return response(config);
+      return response(true);
+    };
+  </script>
+  <script type="module" src="/public/assets/admin-v2/app.js"></script>
+</head>
+<body><div id="app"></div></body>
+</html>

@@ -22,7 +22,13 @@ class OrderController extends Controller
 
     public function detail(Request $request)
     {
-        $order = Order::with(['user', 'plan', 'commission_log', 'invite_user'])->find($request->input('id'));
+        $order = Order::with([
+            'user:id,email',
+            'plan:id,name',
+            'payment:id,name,payment,enable',
+            'commission_log',
+            'invite_user:id,email',
+        ])->find($request->input('id'));
         if (!$order)
             return $this->fail([400202, '订单不存在']);
         if ($order->surplus_order_ids) {
@@ -40,11 +46,12 @@ class OrderController extends Controller
             'plan:id,name',
             'user:id,email',
             'invite_user:id,email',
+            'payment:id,name,payment,enable',
         ]);
 
         if ($request->boolean('is_commission')) {
             $orderModel->whereNotNull('invite_user_id')
-                ->whereNotIn('status', [0, 2])
+                ->where('status', Order::STATUS_COMPLETED)
                 ->where('commission_balance', '>', 0);
         }
 

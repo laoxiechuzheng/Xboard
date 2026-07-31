@@ -80,6 +80,18 @@ class UserController extends Controller
     // Build one filter query condition.
     private function buildFilterQuery(Builder|QueryBuilder $query, string $field, mixed $value): void
     {
+        if ($field === 'subscription_status') {
+            $now = time();
+            if ($value === 'active') {
+                $query->where(function ($statusQuery) use ($now) {
+                    $statusQuery->whereNull('expired_at')->orWhere('expired_at', '>=', $now);
+                });
+            } elseif ($value === 'expired') {
+                $query->whereNotNull('expired_at')->where('expired_at', '<', $now);
+            }
+            return;
+        }
+
         // 处理关联查询
         if (str_contains($field, '.')) {
             if (!method_exists($query, 'whereHas')) {

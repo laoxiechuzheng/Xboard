@@ -1,7 +1,7 @@
 import { api, paged } from '../api.js';
 import { date, esc } from '../ui.js';
 
-const state = { current: 1 };
+const state = { current: 1, commissionStatus: '' };
 
 function money(value) {
   return '¥' + (Number(value || 0) / 100).toFixed(2);
@@ -57,8 +57,11 @@ function summary(orders) {
 
 async function load(root) {
   root.innerHTML = '<div class="loading">正在加载佣金订单…</div>';
-  const result = paged(await api('order/fetch', { method: 'POST', body: { current: state.current, pageSize: 20, is_commission: true } }));
-  root.innerHTML = '<section class="page-heading"><div><h1>佣金运营</h1><p>只显示已有邀请人、完成订单且存在应发佣金的记录。自动结算仍由项目的既有计划任务执行。</p></div><button class="button secondary" data-refresh>刷新</button></section>' + summary(result.rows) + '<section class="panel">' + rows(result.rows) + '<footer class="pagination"><button class="button secondary" data-prev ' + (state.current <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + state.current + ' 页</span><button class="button secondary" data-next ' + (result.rows.length < 20 ? 'disabled' : '') + '>下一页</button></footer></section>';
+  const body = { current: state.current, pageSize: 20, is_commission: true };
+  if (state.commissionStatus !== '') body.filter = [{ id: 'commission_status', value: 'eq:' + state.commissionStatus }];
+  const result = paged(await api('order/fetch', { method: 'POST', body }));
+  root.innerHTML = '<section class="page-heading"><div><h1>佣金运营</h1><p>只显示已有邀请人、完成订单且存在应发佣金的记录。自动结算仍由项目的既有计划任务执行。</p></div><button class="button secondary" data-refresh>刷新</button></section><section class="panel commission-filter"><label>处理状态<select class="input" data-status-filter><option value="">全部状态</option><option value="0" '+(state.commissionStatus==='0'?'selected':'')+'>待核算</option><option value="1" '+(state.commissionStatus==='1'?'selected':'')+'>核算中</option><option value="2" '+(state.commissionStatus==='2'?'selected':'')+'>已结算</option><option value="3" '+(state.commissionStatus==='3'?'selected':'')+'>已拒绝</option></select></label></section>' + summary(result.rows) + '<section class="panel">' + rows(result.rows) + '<footer class="pagination"><button class="button secondary" data-prev ' + (state.current <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + state.current + ' 页</span><button class="button secondary" data-next ' + (result.rows.length < 20 ? 'disabled' : '') + '>下一页</button></footer></section>';
+  root.querySelector('[data-status-filter]').addEventListener('change', event => { state.commissionStatus=event.target.value; state.current=1; load(root).catch(showError); });
   root.querySelector('[data-refresh]').addEventListener('click', () => load(root).catch(showError));
   root.querySelector('[data-prev]').addEventListener('click', () => { state.current -= 1; load(root).catch(showError); });
   root.querySelector('[data-next]').addEventListener('click', () => { state.current += 1; load(root).catch(showError); });
@@ -84,4 +87,4 @@ function changeState(root, tradeNo, current) {
 }
 
 function showError(error) { toast(error.message || '请求失败', true); }
-export function renderCommissions(root) { load(root).catch(showError); }
+export function renderCommissions(root, options = {}) { if (options.commissionStatus !== undefined) { state.commissionStatus=String(options.commissionStatus); state.current=1; } load(root).catch(showError); }

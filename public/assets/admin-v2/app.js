@@ -17,6 +17,23 @@ import { renderSettings } from './pages/settings.js';
 import { renderTrafficResets } from './pages/traffic-resets.js';
 
 const app = document.querySelector('#app');
+const pages = {
+  dashboard: ['运营仪表盘', renderDashboard],
+  users: ['用户管理', renderUsers],
+  plans: ['套餐管理', renderPlans],
+  nodes: ['节点管理', renderNodes],
+  'node-resources': ['节点资源', renderNodeResources],
+  orders: ['订单管理', renderOrders],
+  commissions: ['佣金运营', renderCommissions],
+  tickets: ['工单管理', renderTickets],
+  content: ['内容运营', renderContent],
+  coupons: ['优惠券', renderCoupons],
+  'gift-cards': ['礼品卡', renderGiftCards],
+  payments: ['支付管理', renderPayments],
+  'traffic-resets': ['流量重置', renderTrafficResets],
+  settings: ['系统配置', renderSettings],
+  system: ['系统与队列', renderSystem],
+};
 
 function renderLogin() {
   app.innerHTML = '<main class="admin-login"><form class="login-card" data-login>' +
@@ -45,13 +62,17 @@ function renderShell() {
     '<main><header class="admin-topbar"><div><strong>运营仪表盘</strong><span>所有保存请求均由现有管理员 API 校验</span></div><button class="button secondary" data-logout>退出登录</button></header><div id="page-root"></div></main></div>' +
     '<div id="admin-modal"></div><div id="admin-toast" class="toast"></div>';
   const root = app.querySelector('#page-root');
-  const renderPage = page => {
+  const renderPage = (page, options = {}) => {
+    if (!pages[page]) page = 'dashboard';
     state.page = page;
     app.querySelectorAll('[data-page]').forEach(button => button.classList.toggle('active', button.dataset.page === page));
-    app.querySelector('.admin-topbar strong').textContent = page === 'dashboard' ? '运营仪表盘' : (page === 'plans' ? '套餐管理' : (page === 'nodes' ? '节点管理' : (page === 'node-resources' ? '节点资源' : (page === 'orders' ? '订单管理' : (page === 'commissions' ? '佣金运营' : (page === 'tickets' ? '工单管理' : (page === 'content' ? '内容运营' : (page === 'coupons' ? '优惠券' : (page === 'gift-cards' ? '礼品卡' : (page === 'payments' ? '支付管理' : (page === 'traffic-resets' ? '流量重置' : (page === 'settings' ? '系统配置' : (page === 'system' ? '系统与队列' : '用户管理')))))))))))));
-    (page === 'dashboard' ? renderDashboard : (page === 'plans' ? renderPlans : (page === 'nodes' ? renderNodes : (page === 'node-resources' ? renderNodeResources : (page === 'orders' ? renderOrders : (page === 'commissions' ? renderCommissions : (page === 'tickets' ? renderTickets : (page === 'content' ? renderContent : (page === 'coupons' ? renderCoupons : (page === 'gift-cards' ? renderGiftCards : (page === 'payments' ? renderPayments : (page === 'traffic-resets' ? renderTrafficResets : (page === 'settings' ? renderSettings : (page === 'system' ? renderSystem : renderUsers))))))))))))))(root);
+    app.querySelector('.admin-topbar strong').textContent = pages[page][0];
+    pages[page][1](root, options);
   };
   app.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => renderPage(button.dataset.page)));
+  if (app.adminV2NavigateHandler) app.removeEventListener('admin-v2:navigate', app.adminV2NavigateHandler);
+  app.adminV2NavigateHandler = event => renderPage(event.detail?.page, event.detail?.options || {});
+  app.addEventListener('admin-v2:navigate', app.adminV2NavigateHandler);
   app.querySelector('[data-logout]').addEventListener('click', () => { session.token = ''; render(); });
   renderPage(state.page);
 }
