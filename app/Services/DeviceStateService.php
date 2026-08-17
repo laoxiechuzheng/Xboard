@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Redis;
 class DeviceStateService
 {
     private const PREFIX = 'user_devices:';
-    private const TTL = 600;                     // device state ttl (extended from 300 to 600 to prevent race condition)
+    private const TTL = 300;                     // device state ttl
     private const DB_THROTTLE = 10;             // update db throttle
 
     /**
