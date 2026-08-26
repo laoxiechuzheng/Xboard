@@ -96,8 +96,7 @@ class NodeWorker
             $seen = [];
 
             foreach (NodeRegistry::getConnectedNodeIds() as $nodeId) {
-                $conn = NodeRegistry::get($nodeId);
-                if ($conn) {
+                foreach (NodeRegistry::getAll($nodeId) as $conn) {
                     $oid = spl_object_id($conn);
                     if (!isset($seen[$oid])) {
                         $seen[$oid] = true;
@@ -193,15 +192,19 @@ class NodeWorker
 
         $realNodeId = $node->id;
 
+        $wasOnline = NodeRegistry::isOnline($realNodeId);
         $conn->nodeId = $realNodeId;
         NodeRegistry::add($realNodeId, $conn);
         Cache::put("node_ws_alive:{$realNodeId}", true, 86400);
 
-        app(DeviceStateService::class)->clearAllNodeDevices($realNodeId);
+        if (!$wasOnline) {
+            app(DeviceStateService::class)->clearAllNodeDevices($realNodeId);
+        }
 
         Log::debug("[WS] Node#{$realNodeId} connected", [
             'remote' => $conn->getRemoteIp(),
             'total' => NodeRegistry::count(),
+            'conns' => count(NodeRegistry::getAll($realNodeId)),
         ]);
 
         $conn->send(json_encode([
@@ -331,6 +334,16 @@ class NodeWorker
         if (!empty($conn->nodeId)) {
             $nodeId = $conn->nodeId;
             NodeRegistry::remove($nodeId, $conn);
+
+            // The node stays online while at least one other machine still
+            // holds a live connection for it.
+            if (NodeRegistry::isOnline($nodeId)) {
+                Log::debug("[WS] Node#{$nodeId} connection closed, other connections remain", [
+                    'total' => NodeRegistry::count(),
+                ]);
+                return;
+            }
+
             Cache::forget("node_ws_alive:{$nodeId}");
 
             $affectedUserIds = $service->clearAllNodeDevices($nodeId);
