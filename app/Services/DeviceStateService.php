@@ -173,7 +173,7 @@ class DeviceStateService
     /**
      * Strip port from IP address: "1.2.3.4:12345" → "1.2.3.4", "[::1]:443" → "::1"
      */
-    private static function normalizeIP(string $ip): string
+    public static function normalizeIP(string $ip): string
     {
         // [IPv6]:port
         if (preg_match('/^\[(.+)\]:\d+$/', $ip, $m)) {

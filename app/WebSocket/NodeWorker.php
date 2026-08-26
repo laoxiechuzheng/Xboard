@@ -325,9 +325,18 @@ class NodeWorker
             $machineId = $conn->machineId ?? 'unknown';
             foreach ($conn->machineNodeIds as $nodeId) {
                 NodeRegistry::remove($nodeId, $conn);
+
+                if (NodeRegistry::isOnline((int) $nodeId)) {
+                    // Other machines still hold this node alive; refresh the
+                    // merged view instead of wiping shared device data.
+                    Cache::put("node_ws_alive:{$nodeId}", true, 86400);
+                    NodeEventHandlers::syncMergedViewToRedis((int) $nodeId, $service);
+                    continue;
+                }
+
                 Cache::forget("node_ws_alive:{$nodeId}");
 
-                $affectedUserIds = $service->clearAllNodeDevices($nodeId);
+                $affectedUserIds = $service->clearAllNodeDevices((int) $nodeId);
                 foreach ($affectedUserIds as $userId) {
                     $service->notifyUpdate($userId);
                 }
@@ -350,9 +359,13 @@ class NodeWorker
             NodeRegistry::remove($nodeId, $conn);
 
             // The node stays online while at least one other machine still
-            // holds a live connection for it.
-            if (NodeRegistry::isOnline($nodeId)) {
-                Log::debug("[WS] Node#{$nodeId} connection closed, other connections remain", [
+            // holds a live connection for it; rebuild the merged device view
+            // from whatever remains so departed contributions are dropped but
+            // surviving ones survive intact.
+            if (NodeRegistry::isOnline((int) $nodeId)) {
+                Cache::put("node_ws_alive:{$nodeId}", true, 86400);
+                NodeEventHandlers::syncMergedViewToRedis((int) $nodeId, $service);
+                Log::debug('[WS] Node#' . $nodeId . ' connection closed, other connections remain', [
                     'total' => NodeRegistry::count(),
                 ]);
                 return;

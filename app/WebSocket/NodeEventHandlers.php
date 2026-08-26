@@ -38,8 +38,13 @@ class NodeEventHandlers
 
     /**
      * Handle device report from node
-     * 
+     *
      * 数据格式: {"event": "report.devices", "data": {userId: [ip1, ip2, ...], ...}}
+     *
+     * Multiple xboard-node instances (redundant machines) may serve the same
+     * node_id. Each connection keeps its own snapshot and we reconcile the
+     * union of all snapshots against Redis so machines never overwrite each
+     * other's observed devices.
      */
     public static function handleDeviceReport(TcpConnection $conn, int $nodeId, array $data): void
     {
@@ -49,34 +54,60 @@ class NodeEventHandlers
             $data = $data['devices'];
         }
 
-        // Get old data
-        $oldDevices = $service->getNodeDevices($nodeId);
-
-        // Calculate diff
-        $removedUsers = array_diff_key($oldDevices, $data);
-        $newDevices = [];
-
+        // Normalize the payload this specific connection sent.
+        $snapshot = [];
         foreach ($data as $userId => $ips) {
             if (is_numeric($userId) && is_array($ips)) {
-                $newDevices[(int) $userId] = $ips;
+                $snapshot[(int) $userId] = array_values(
+                    array_unique(array_map([DeviceStateService::class, 'normalizeIP'], $ips))
+                );
             }
         }
 
-        // Handle removed users
+        // Remember this connection's contribution so close/recompute can use it.
+        $conn->lastDeviceReport = $snapshot;
+
+        self::syncMergedViewToRedis($nodeId, $service);
+
+        Log::debug("[WS] Node#{$nodeId} synced " . count($snapshot) . ' users from one connection, active connections=' . count(NodeRegistry::getAll($nodeId)));
+    }
+
+    /**
+     * Recompute the union of every live connection's device snapshot for a node
+     * and reconcile the Redis cache with that merged view. A user stays online
+     * while ANY contributing connection reports them; they only disappear once
+     * every live connection stops reporting them.
+     */
+    public static function syncMergedViewToRedis(int $nodeId, DeviceStateService $service): void
+    {
+        $mergedView = [];
+        foreach (NodeRegistry::getAll($nodeId) as $c) {
+            if (!isset($c->lastDeviceReport) || !is_array($c->lastDeviceReport)) {
+                continue;
+            }
+            foreach ($c->lastDeviceReport as $uid => $ips) {
+                if (!isset($mergedView[$uid])) {
+                    $mergedView[$uid] = [];
+                }
+                $mergedView[$uid] = array_values(array_unique(array_merge($mergedView[$uid], $ips)));
+            }
+        }
+
+        $oldDevices = $service->getNodeDevices($nodeId);
+        $removedUsers = array_diff_key($oldDevices, $mergedView);
+
         foreach ($removedUsers as $userId => $ips) {
             $service->removeNodeDevices($nodeId, $userId);
             $service->notifyUpdate($userId);
         }
 
-        // Handle new/updated users
-        foreach ($newDevices as $userId => $ips) {
-            $service->setDevices($userId, $nodeId, $ips);
+        // Refresh stored entries even when unchanged so the TTL does not expire
+        // a still-active device just because nothing changed between cycles.
+        foreach ($mergedView as $userId => $ips) {
+            $service->setDevices($userId, $nodeId, array_values($ips));
         }
 
-        // Mark for push
         Redis::sadd('device:push_pending_nodes', $nodeId);
-
-        Log::debug("[WS] Node#{$nodeId} synced " . count($newDevices) . " users, removed " . count($removedUsers));
     }
 
     /**
@@ -97,7 +128,7 @@ class NodeEventHandlers
             'users' => $devices,
         ]);
 
-        Log::debug("[WS] Node#{$nodeId} requested devices, sent " . count($devices) . " users");
+        Log::debug("[WS] Node#{$nodeId} requested devices, sent " . count($devices) . ' users');
     }
 
     /**
@@ -116,7 +147,7 @@ class NodeEventHandlers
             'users' => $devices
         ]);
 
-        Log::debug("[WS] Pushed device state to node#{$nodeId}: " . count($devices) . " users");
+        Log::debug("[WS] Pushed device state to node#{$nodeId}: " . count($devices) . ' users');
     }
 
     /**
