@@ -10,7 +10,7 @@ use App\Support\AbstractProtocol;
 
 class ClashMeta extends AbstractProtocol
 {
-    public $flags = ['meta', 'verge', 'flclash', 'nekobox', 'clashmetaforandroid', '98k/clashmi', '98k/mac', '98k/clashmac', '98kjc.com/openclash'];
+    public $flags = ['meta', 'verge', 'flclash', 'nekobox', 'clashmetaforandroid', '98k/clashmi', '98k/mac', '98k/clashmac', '98kjc.com/openclash', 'yzy/clashmi', 'yzy/mac', 'yzy/clashmac', 'yunzhiyi.top/openclash', 'mg/clashmi', 'mg/mac', 'mg/clashmac', 'mgjc.cc/openclash'];
     const CUSTOM_TEMPLATE_FILE = 'resources/rules/custom.clashmeta.yaml';
     const CUSTOM_CLASH_TEMPLATE_FILE = 'resources/rules/custom.clash.yaml';
     const DEFAULT_TEMPLATE_FILE = 'resources/rules/default.clash.yaml';
