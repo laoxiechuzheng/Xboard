@@ -93,7 +93,7 @@ class Setting
     public function toArray(): array
     {
         $this->load();
-        return $this->loadedSettings;
+        return $this->loadedSettings ?? [];
     }
 
     /**
@@ -125,7 +125,9 @@ class Setting
             
             $this->loadedSettings = $settings;
         } catch (\Throwable) {
-            $this->loadedSettings = [];
+            // Transient failure (e.g. Redis loading RDB right after restart).
+            // Keep null so the next access retries instead of caching empty.
+            $this->loadedSettings = null;
         }
     }
 

@@ -68,6 +68,20 @@ class NodeWorker
     public function onWorkerStart(Worker $worker): void
     {
         Log::info("[WS] Worker started, pid={$worker->id}");
+        // Warm up the settings cache so a Redis that is still loading its RDB
+        // snapshot cannot poison authenticateNode() with an empty token set
+        // (the old worker would then close handshakes before sending 101).
+        for ($settingsRetry = 0; $settingsRetry < 30; $settingsRetry++) {
+            $serverToken = admin_setting('server_token', '');
+            if (is_string($serverToken) && $serverToken !== '') {
+                break;
+            }
+            if ($settingsRetry >= 29) {
+                Log::warning('[WS] settings cache still unavailable after 30s, continuing anyway');
+                break;
+            }
+            sleep(1);
+        }
         $this->subscribeRedis();
         $this->setupTimers();
     }
