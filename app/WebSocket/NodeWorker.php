@@ -74,7 +74,20 @@ class NodeWorker
 
     private function setupTimers(): void
     {
-        Cache::put(self::HEARTBEAT_CACHE_KEY, time(), self::HEARTBEAT_TTL);
+        // Redis may still be loading its RDB snapshot right after the container
+        // restarts. Retry the heartbeat write instead of letting the worker exit
+        // and cause supervisor to crash-loop the ws-server.
+        for ($redisRetry = 0; $redisRetry < 30; $redisRetry++) {
+            try {
+                Cache::put(self::HEARTBEAT_CACHE_KEY, time(), self::HEARTBEAT_TTL);
+                break;
+            } catch (\Throwable $e) {
+                if ($redisRetry >= 29) {
+                    throw $e;
+                }
+                sleep(1);
+            }
+        }
         Timer::add(self::HEARTBEAT_INTERVAL, function () {
             Cache::put(self::HEARTBEAT_CACHE_KEY, time(), self::HEARTBEAT_TTL);
         });
