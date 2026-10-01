@@ -333,8 +333,13 @@ class Loon extends AbstractProtocol
     }
 
     // obfs salamander 混淆
-    if (data_get($protocol_settings, 'obfs.type') === 'salamander') {
-        if ($obfsPassword = data_get($protocol_settings, 'obfs.password')) {
+    if (data_get($protocol_settings, 'obfs.open') && data_get($protocol_settings, 'obfs.type') === 'salamander') {
+        $obfsPassword = data_get($protocol_settings, 'obfs.password');
+        if ($obfsPassword !== null && (string) $obfsPassword !== '') {
+            $obfsPassword = (string) $obfsPassword;
+            if (str_contains($obfsPassword, ',')) {
+                $obfsPassword = json_encode($obfsPassword, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            }
             $config[] = "salamander-password={$obfsPassword}";
         }
     }
