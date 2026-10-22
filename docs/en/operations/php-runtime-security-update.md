@@ -10,7 +10,7 @@ The application is built from this fork's checked-out source and existing `compo
 
 ## Build and Release
 
-The GitHub Actions workflow supports an optional `image_tag` input for a candidate release. It first loads and tests an amd64 image, checks Composer platform requirements, and runs the entrypoint behavior tests in disposable containers without a network. It then builds and publishes amd64 and arm64 images. Only master builds publish `latest` and `new`.
+The GitHub Actions workflow supports an optional `image_tag` input for a candidate release. It first loads and tests an amd64 image, checks Composer platform requirements, and runs the entrypoint behavior tests in disposable containers without a network. It then builds and publishes amd64 and arm64 images by default. A candidate branch may select `linux/amd64` for an architecture-specific deployment. Master rejects single-architecture builds, so `latest` and `new` retain both architectures.
 
 Use an immutable published digest for deployment and record the old digest before changing anything. A container restart alone does not replace its image. `pull: true` in the build workflow refreshes the explicitly selected build inputs; the digest pins control which inputs may be used.
 

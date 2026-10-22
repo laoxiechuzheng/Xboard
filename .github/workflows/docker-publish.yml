@@ -9,6 +9,14 @@ on:
         description: Optional candidate image tag
         required: false
         type: string
+      platforms:
+        description: Candidate platforms; master always requires both architectures
+        required: false
+        default: linux/amd64,linux/arm64
+        type: choice
+        options:
+          - linux/amd64,linux/arm64
+          - linux/amd64
 
 env:
   REGISTRY: ghcr.io
@@ -23,6 +31,15 @@ jobs:
       id-token: write
 
     steps:
+      - name: Protect multiarch release tags
+        env:
+          REQUESTED_PLATFORMS: ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}
+        run: |
+          if [ "$GITHUB_REF" = refs/heads/master ] && [ "$REQUESTED_PLATFORMS" != linux/amd64,linux/arm64 ]; then
+            echo 'Master release tags require both architectures.' >&2
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -126,7 +143,7 @@ jobs:
           push: true
           load: false
           pull: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: ${{ steps.meta.outputs.tags }}
