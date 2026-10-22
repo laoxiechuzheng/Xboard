@@ -39,6 +39,12 @@ docker compose up -d
 
 ## 📖 Documentation
 
+### PHP Runtime Security Update
+
+The Docker build includes PHP 8.2.35 for CVE-2026-109618 and CVE-2026-109619. It retains Alpine 3.23, Swoole 6.3.0RC1, Redis 8.4.2, and Caddy 2.11.4 with pinned build inputs and runtime checks. Application source and Composer dependencies remain managed by this fork.
+
+For a runtime-only deployment, see [the security update runbook](./docs/en/operations/php-runtime-security-update.md) before recreating containers. The normal entrypoint runs application updates; the documented runtime-only options deliberately skip those updates and publish explicitly selected persistent themes.
+
 ### 🔄 Upgrade Notice
 > 🚨 **Important:** This version involves significant changes. Please strictly follow the upgrade documentation and backup your database before upgrading. Note that upgrading and migration are different processes, do not confuse them.
 

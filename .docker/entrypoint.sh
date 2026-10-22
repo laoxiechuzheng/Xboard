@@ -1,6 +1,15 @@
 #!/bin/sh
 set -e
 
+case "${SKIP_APP_UPDATE-false}" in
+    true|1) skip_app_update=true ;;
+    false|0|"") skip_app_update=false ;;
+    *)
+        echo "[entrypoint] ERROR: SKIP_APP_UPDATE must be true, 1, false, 0, or empty." >&2
+        exit 1
+        ;;
+esac
+
 # Resolve the binding scheme based on whether the embedded Caddy is enabled.
 #
 # When ENABLE_CADDY=true (default), Caddy owns the public port (7001) and
@@ -128,7 +137,64 @@ redis_reachable() {
     esac
 }
 
-if [ ! -s /www/.env ] || ! grep -qE '^INSTALLED=(1|true)$' /www/.env || echo " $* " | grep -q ' xboard:install '; then
+publish_user_themes() {
+    local theme_name source_dir target_dir restore_glob=false
+
+    case $- in
+        *f*) ;;
+        *) set -f; restore_glob=true ;;
+    esac
+
+    for theme_name in ${PUBLISH_USER_THEMES:-}; do
+        case "$theme_name" in
+            .|..|*[!A-Za-z0-9._-]*)
+                echo "[entrypoint] ERROR: Invalid user theme name: ${theme_name}" >&2
+                exit 1
+                ;;
+        esac
+
+        source_dir="/www/storage/theme/${theme_name}"
+        target_dir="/www/public/theme/${theme_name}"
+
+        if [ -L "$source_dir" ]; then
+            echo "[entrypoint] ERROR: User theme source is a symlink: ${theme_name}" >&2
+            exit 1
+        fi
+        if [ ! -d "$source_dir" ]; then
+            echo "[entrypoint] ERROR: User theme source does not exist: ${theme_name}" >&2
+            exit 1
+        fi
+        if [ ! -f "${source_dir}/config.json" ] || [ ! -f "${source_dir}/dashboard.blade.php" ]; then
+            echo "[entrypoint] ERROR: User theme is missing config.json or dashboard.blade.php: ${theme_name}" >&2
+            exit 1
+        fi
+        if [ -L "$target_dir" ]; then
+            echo "[entrypoint] ERROR: User theme target is a symlink: ${theme_name}" >&2
+            exit 1
+        fi
+
+        if ! mkdir -p "$target_dir"; then
+            echo "[entrypoint] ERROR: Cannot create user theme target: ${theme_name}" >&2
+            exit 1
+        fi
+        if ! cp -a "${source_dir}/." "${target_dir}/"; then
+            echo "[entrypoint] ERROR: Cannot publish user theme: ${theme_name}" >&2
+            exit 1
+        fi
+
+        echo "[entrypoint] Published user theme: ${theme_name}"
+    done
+
+    [ "$restore_glob" = false ] || set +f
+}
+
+if [ -n "${PUBLISH_USER_THEMES:-}" ]; then
+    publish_user_themes
+fi
+
+if [ "$skip_app_update" = true ]; then
+    echo "[entrypoint] Skipping xboard:update (SKIP_APP_UPDATE enabled)."
+elif [ ! -s /www/.env ] || ! grep -qE '^INSTALLED=(1|true)$' /www/.env || echo " $* " | grep -q ' xboard:install '; then
     echo "[entrypoint] Skipping xboard:update (not yet installed or running xboard:install)."
 else
     if redis_reachable; then
