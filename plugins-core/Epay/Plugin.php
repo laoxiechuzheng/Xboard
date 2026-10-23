@@ -79,18 +79,74 @@ class Plugin extends AbstractPlugin implements PaymentInterface
 
     public function notify($params): array|bool
     {
+        $secret = $this->getConfig('key');
+        if (!is_string($secret) || trim($secret) === '' || !is_array($params)) {
+            return false;
+        }
+        foreach ($params as $value) {
+            if (!is_string($value) && !is_int($value)) {
+                return false;
+            }
+        }
+        if (!is_string($params['sign'] ?? null)
+            || !is_string($params['out_trade_no'] ?? null) || trim($params['out_trade_no']) === ''
+            || !is_string($params['trade_no'] ?? null) || trim($params['trade_no']) === '') {
+            return false;
+        }
+        $pid = $this->getConfig('pid');
+        if ((!is_string($pid) && !is_int($pid)) || trim((string) $pid) === ''
+            || (string) ($params['pid'] ?? '') !== (string) $pid
+            || ($params['trade_status'] ?? null) !== 'TRADE_SUCCESS'
+            || ($params['sign_type'] ?? 'MD5') !== 'MD5') {
+            return false;
+        }
+        $totalAmount = $this->amountToCents($params['money'] ?? null);
+        if ($totalAmount === null) {
+            return false;
+        }
+
         $sign = $params['sign'];
         unset($params['sign'], $params['sign_type']);
         ksort($params);
-        $str = stripslashes(urldecode(http_build_query($params))) . $this->getConfig('key');
+        $str = stripslashes(urldecode(http_build_query($params))) . $secret;
 
-        if ($sign !== md5($str)) {
+        if (!hash_equals(md5($str), $sign)) {
             return false;
         }
 
         return [
             'trade_no' => $params['out_trade_no'],
-            'callback_no' => $params['trade_no']
+            'callback_no' => $params['trade_no'],
+            'total_amount' => $totalAmount
         ];
+    }
+
+    private function amountToCents(mixed $amount): ?int
+    {
+        if (!is_string($amount) && !is_int($amount)) {
+            return null;
+        }
+
+        $value = trim((string) $amount);
+        if (!preg_match('/^(\d+)(?:\.(\d{1,2}))?$/D', $value, $matches)) {
+            return null;
+        }
+
+        $whole = ltrim($matches[1], '0');
+        $whole = $whole === '' ? '0' : $whole;
+        $wholeLimit = (string) intdiv(PHP_INT_MAX, 100);
+        if (strlen($whole) > strlen($wholeLimit)
+            || (strlen($whole) === strlen($wholeLimit) && strcmp($whole, $wholeLimit) > 0)) {
+            return null;
+        }
+
+        $fraction = str_pad($matches[2] ?? '', 2, '0', STR_PAD_RIGHT);
+        $wholeCents = (int) $whole * 100;
+        $fractionCents = (int) $fraction;
+        if ($wholeCents > PHP_INT_MAX - $fractionCents) {
+            return null;
+        }
+
+        return $wholeCents + $fractionCents;
     }
 }
