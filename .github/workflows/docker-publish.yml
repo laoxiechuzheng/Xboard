@@ -135,6 +135,15 @@ jobs:
           exec sh /tmp/entrypoint-runtime-update.sh
           CONTAINER_ENTRYPOINT_TEST
 
+      - name: Test payment callback security
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint php "xboard-runtime-check:${GITHUB_SHA}" \
+            /www/tests/security/payment-callback.php
+
       - name: Build and push
         id: build-and-push
         uses: docker/build-push-action@v5
