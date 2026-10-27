@@ -2,6 +2,7 @@
 
 namespace App\Protocols;
 
+use App\Utils\Helper;
 use App\Support\AbstractProtocol;
 use App\Models\Server;
 
@@ -15,6 +16,7 @@ class QuantumultX extends AbstractProtocol
         Server::TYPE_TROJAN,
         Server::TYPE_HYSTERIA,
         Server::TYPE_VLESS,
+        Server::TYPE_ANYTLS,
     ];
 
     public function handle()
@@ -38,6 +40,9 @@ class QuantumultX extends AbstractProtocol
             }
             if ($item['type'] === Server::TYPE_HYSTERIA) {
                 $uri .= self::buildHysteria($item['password'], $item);
+            }
+            if ($item['type'] === Server::TYPE_ANYTLS) {
+                $uri .= self::buildAnyTLS($item['password'], $item);
             }
         }
         
@@ -142,5 +147,21 @@ class QuantumultX extends AbstractProtocol
         $config = ["hysteria2={$server['host']}:{$server['port']}", "password={$password}", "fast-open=true", "udp-relay=true", "tag={$server['name']}"];
         if ($sni = data_get($protocol_settings, 'tls.server_name')) $config[] = "sni={$sni}";
         return implode(',', $config) . "\r\n";
+    }
+
+    public static function buildAnyTLS($password, $server)
+    {
+        $protocol_settings = data_get($server, 'protocol_settings', []);
+        $addr = Helper::wrapIPv6($server['host']);
+        $config = [
+            "anytls={$addr}:{$server['port']}",
+            "password={$password}",
+            'over-tls=true',
+            data_get($protocol_settings, 'tls.allow_insecure') ? 'tls-verification=false' : 'tls-verification=true',
+            data_get($protocol_settings, 'tls.server_name') ? "tls-host={$protocol_settings['tls']['server_name']}" : '',
+            'udp-relay=true',
+            "tag={$server['name']}"
+        ];
+        return implode(',', array_filter($config)) . "\r\n";
     }
 }
