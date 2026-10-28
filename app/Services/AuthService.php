@@ -9,6 +9,7 @@ use Laravel\Sanctum\PersonalAccessToken;
 class AuthService
 {
     private User $user;
+    private ?int $lastTokenId = null;
 
     public function __construct(User $user)
     {
@@ -23,6 +24,7 @@ class AuthService
             ['*'], // abilities
             now()->addYear() // expiration
         );
+        $this->lastTokenId = (int) $token->accessToken->getKey();
 
         // Format token: remove ID prefix and add Bearer
         $tokenParts = explode('|', $token->plainTextToken);
@@ -33,6 +35,14 @@ class AuthService
             'auth_data' => $formattedToken,
             'is_admin' => $this->user->is_admin,
         ];
+    }
+
+    /**
+     * 最近一次 generateAuthData() 签发的 token id（用于登录记录标记“当前设备”）。
+     */
+    public function getLastTokenId(): ?int
+    {
+        return $this->lastTokenId;
     }
 
     public function getSessions(): array

@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\UserUpdate;
 use App\Jobs\SendEmailJob;
 use App\Models\Plan;
 use App\Models\User;
+use App\Models\UserLoginLog;
 use App\Services\AuthService;
 use App\Services\NodeSyncService;
 use App\Services\Plugin\HookManager;
@@ -716,6 +717,7 @@ class UserController extends Controller
             $user->codes()->delete();
             $user->stat()->delete();
             $user->tickets()->delete();
+            UserLoginLog::where('user_id', $user->id)->delete();
             $user->delete();
             DB::commit();
 

@@ -7,10 +7,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Passport\AuthForget;
 use App\Http\Requests\Passport\AuthLogin;
 use App\Http\Requests\Passport\AuthRegister;
+use App\Models\UserLoginLog;
 use App\Services\Auth\LoginService;
 use App\Services\Auth\MailLinkService;
 use App\Services\Auth\RegisterService;
 use App\Services\AuthService;
+use App\Services\LoginLogService;
 use Illuminate\Http\Request;
 
 class AuthController extends Controller
@@ -18,15 +20,18 @@ class AuthController extends Controller
     protected MailLinkService $mailLinkService;
     protected RegisterService $registerService;
     protected LoginService $loginService;
+    protected LoginLogService $loginLogService;
 
     public function __construct(
         MailLinkService $mailLinkService,
         RegisterService $registerService,
-        LoginService $loginService
+        LoginService $loginService,
+        LoginLogService $loginLogService
     ) {
         $this->mailLinkService = $mailLinkService;
         $this->registerService = $registerService;
         $this->loginService = $loginService;
+        $this->loginLogService = $loginLogService;
     }
 
     /**
@@ -63,7 +68,9 @@ class AuthController extends Controller
         }
 
         $authService = new AuthService($result);
-        return $this->success($authService->generateAuthData());
+        $authData = $authService->generateAuthData();
+        $this->loginLogService->record($result, UserLoginLog::TYPE_REGISTER, true, $authService->getLastTokenId(), $request);
+        return $this->success($authData);
     }
 
     /**
@@ -81,7 +88,9 @@ class AuthController extends Controller
         }
 
         $authService = new AuthService($result);
-        return $this->success($authService->generateAuthData());
+        $authData = $authService->generateAuthData();
+        $this->loginLogService->record($result, UserLoginLog::TYPE_LOGIN, true, $authService->getLastTokenId(), $request);
+        return $this->success($authData);
     }
 
     /**
@@ -119,9 +128,12 @@ class AuthController extends Controller
             }
 
             $authService = new AuthService($user);
+            $authData = $authService->generateAuthData();
+            // verify 码来自邮件登录链接或已登录用户生成的快速登录链接，两者共用同一缓存键，统一记为 mail_link。
+            $this->loginLogService->record($user, UserLoginLog::TYPE_MAIL_LINK, true, $authService->getLastTokenId(), $request);
 
             return response()->json([
-                'data' => $authService->generateAuthData()
+                'data' => $authData
             ]);
         }
 

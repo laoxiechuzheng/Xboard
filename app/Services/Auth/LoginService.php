@@ -3,6 +3,8 @@
 namespace App\Services\Auth;
 
 use App\Models\User;
+use App\Models\UserLoginLog;
+use App\Services\LoginLogService;
 use App\Services\Plugin\HookManager;
 use App\Utils\CacheKey;
 use App\Utils\Helper;
@@ -59,6 +61,8 @@ class LoginService
                     60 * (int) admin_setting('password_limit_expire', 60)
                 );
             }
+            // 记录密码错误的尝试，用户可在登录记录里发现异常登录
+            app(LoginLogService::class)->record($user, UserLoginLog::TYPE_LOGIN, false);
             return [false, [400, __('Incorrect email or password')]];
         }
 
