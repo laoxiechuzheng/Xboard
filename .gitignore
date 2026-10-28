@@ -32,3 +32,5 @@ compose.yaml
 compose.host.yaml
 compose.split.yaml
 .scribe
+/admin-next/node_modules
+/admin-next/.env*.local

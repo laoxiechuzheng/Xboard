@@ -1,0 +1,55 @@
+name: Admin Next
+
+# Type-checks and builds the open-source admin (admin-next/) and verifies that the
+# committed build in public/assets/admin-next matches the source. The Docker image
+# ships the committed build as-is; this workflow does not publish anything.
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "admin-next/**"
+      - "public/assets/admin-next/**"
+      - ".github/workflows/admin-next.yml"
+  pull_request:
+    paths:
+      - "admin-next/**"
+      - "public/assets/admin-next/**"
+      - ".github/workflows/admin-next.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-next
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: admin-next/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: admin-next/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check and build
+        run: pnpm build
+
+      - name: Committed build is up to date
+        working-directory: .
+        run: |
+          if ! git diff --quiet -- public/assets/admin-next || [ -n "$(git ls-files --others --exclude-standard public/assets/admin-next)" ]; then
+            echo "::error::public/assets/admin-next is out of date. Run 'pnpm build' in admin-next/ and commit the result."
+            git status --short -- public/assets/admin-next
+            exit 1
+          fi

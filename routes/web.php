@@ -90,6 +90,16 @@ Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path
     ]);
 });
 
+// New open-source admin (source: admin-next/). The official admin below stays at /{secure_path}.
+Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))) . '/next', function () {
+    return view('admin-next', [
+        'title' => admin_setting('app_name', 'XBoard'),
+        'version' => app(UpdateService::class)->getCurrentVersion(),
+        'logo' => admin_setting('logo'),
+        'secure_path' => admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key'))))
+    ]);
+});
+
 Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))), function () {
     return view('admin', [
         'title' => admin_setting('app_name', 'XBoard'),

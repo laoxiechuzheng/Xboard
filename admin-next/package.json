@@ -1,0 +1,29 @@
+{
+  "name": "xboard-admin-next",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Open-source Xboard admin console served at /{secure_path}/next",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "build": "vue-tsc --noEmit -p tsconfig.json && vite build && node scripts/check-chunks.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vicons/ionicons5": "^0.13.0",
+    "echarts": "^6.1.0",
+    "marked": "^18.1.2",
+    "naive-ui": "^2.45.3",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.5",
+    "vue-tsc": "^3.3.13"
+  }
+}

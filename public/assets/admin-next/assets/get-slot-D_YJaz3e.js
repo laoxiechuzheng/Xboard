@@ -1,0 +1,1 @@
+var e={tiny:`mini`,small:`tiny`,medium:`small`,large:`medium`,huge:`large`};function t(t){let n=e[t];if(n===void 0)throw Error(`${t} has no smaller size.`);return n}function n(e,t=`default`,n=[]){let r=e.$slots[t];return r===void 0?n:r()}export{t as n,n as t};

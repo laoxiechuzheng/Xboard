@@ -1,5 +1,8 @@
 * text=auto
 .docker/caddy/Caddyfile -text
+# Keep admin-next sources LF everywhere so `pnpm build` output is identical across OSes.
+admin-next/** text=auto eol=lf
+public/assets/admin-next/** text=auto eol=lf
 *.css linguist-vendored
 *.scss linguist-vendored
 *.js linguist-vendored

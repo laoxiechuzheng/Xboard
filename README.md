@@ -48,6 +48,9 @@ For a runtime-only deployment, see [the security update runbook](./docs/en/opera
 ### 🔄 Upgrade Notice
 > 🚨 **Important:** This version involves significant changes. Please strictly follow the upgrade documentation and backup your database before upgrading. Note that upgrading and migration are different processes, do not confuse them.
 
+### Admin Next (open-source admin)
+This fork ships an open-source admin console at `/{secure_path}/next` (source in `admin-next/`), alongside the unchanged official admin at `/{secure_path}`. See [docs/admin-next](./docs/admin-next/README.md).
+
 ### Development Guides
 - [Plugin Development Guide](./docs/en/development/plugin-development-guide.md) - Complete guide for developing XBoard plugins
 
