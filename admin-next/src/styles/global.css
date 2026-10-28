@@ -41,6 +41,24 @@ body {
   gap: 16px;
 }
 
+/*
+ * Phones: Naive's daterange panel holds two calendars (~580px), so its right month and 清除/确认 end up off
+ * screen. Show only the start calendar there; its arrows still page through months and a range can span them.
+ * `body` raises specificity above Naive's runtime-injected `.n-date-panel.n-date-panel--daterange`.
+ */
+@media (max-width: 767px) {
+  body .n-date-panel.n-date-panel--daterange {
+    grid-template-areas:
+      'left-calendar'
+      'footer'
+      'action';
+  }
+  body .n-date-panel--daterange .n-date-panel-calendar--end,
+  body .n-date-panel--daterange .n-date-panel__vertical-divider {
+    display: none;
+  }
+}
+
 /* Markdown preview */
 .markdown-body {
   font-size: 14px;

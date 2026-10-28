@@ -7,7 +7,7 @@
 | 访问地址 | `/{secure_path}` | `/{secure_path}/next` |
 | 前端资源 | `public/assets/admin/`（闭源） | `public/assets/admin-next/`（由 `admin-next/` 构建） |
 | 入口视图 | `resources/views/admin.blade.php` | `resources/views/admin-next.blade.php` |
-| 后端接口 | `/api/v2/{secure_path}/*` | 同左（不新增、不修改后端接口） |
+| 后端接口 | `/api/v2/{secure_path}/*` | 同左；另用到本 fork 新增的只读接口 `user/loginLog/fetch`（登录记录，见下文“登录记录”） |
 | 登录态 | localStorage `XBOARD_ACCESS_TOKEN` | 同一 token（登录任一后台后可直接切换） |
 
 两个后台互不依赖：新后台出问题时直接用旧地址即可；回滚新后台只需撤掉路由或回滚镜像，不影响数据。仓库里更早的 `/admin-v2`、`/console` 实验入口也原样保留（见 `docs/administration/remove-independent-admin-v2.md`）。
@@ -19,7 +19,7 @@
   - [core.md](spec/core.md) 登录、通用约定、布局、仪表盘、格式化
   - [settings.md](spec/settings.md) 系统设置、邮件模板、订阅模板
   - [nodes.md](spec/nodes.md) 节点、服务器（机器）、权限组、路由
-  - [users.md](spec/users.md) 用户、流量记录、流量重置
+  - [users.md](spec/users.md) 用户、流量记录、流量重置、登录记录（§17）
   - [commerce.md](spec/commerce.md) 套餐、订单/佣金、支付、优惠券、礼品卡
   - [content.md](spec/content.md) 工单、公告、知识库
   - [platform.md](spec/platform.md) 主题、插件、插件页面、系统状态、审计日志
@@ -29,6 +29,16 @@
 菜单与官方一致：仪表盘；系统管理（系统配置、插件管理、主题配置、公告管理、支付配置、知识库管理）；节点管理（服务器管理、节点管理、权限组管理、路由管理）；订阅管理（套餐、订单、优惠券、礼品卡）；用户管理（用户、工单）；插件通过 `config.json` 声明的 `admin_menus` / `admin_crud` 动态菜单与页面。
 
 在官方基础上补充（不改后端）：系统状态页、审计日志页、流量重置日志菜单入口、Ctrl/⌘+K 菜单搜索、深浅色/跟随系统主题，以及各规格“差异与风险”章节列出的官方前端缺陷修正。界面仅中文。
+
+依赖本 fork 后端改动的补充：**登录记录**（用户管理 → 登录记录 `#/user/login-log`，用户行操作“登录记录”弹窗，用户详情的“最后登录IP”），见下节。
+
+## 登录记录
+
+- 后端（提交 `40bde40`）：用户每次密码登录、注册、邮件链接/快速登录链接登录都会写一行 `v2_user_login_log`（IP、UA 解析出的设备、来源站点），密码错误的尝试也记录；归属地由队列任务 `ResolveLoginLogLocationJob`（`default` 队列）异步解析，通常几秒内完成：先调用 `https://api.ip.sb/geoip/{ip}`，失败（超时、非 2xx、无 `country_code`）时回退到 `http://ip-api.com/json/{ip}`（`app/Services/LoginLogService.php::lookupIpApi`）。注意回退是**明文 HTTP**，用户 IP 会以明文发给第二家第三方服务；内网/保留地址不会外发。结果按 IP 缓存 7 天，两家都失败时缓存 1 分钟。日志保留 6 个月（每日 `reset:log` 清理），删除用户时一并删除。
+- 管理接口：`GET /api/v2/{secure_path}/user/loginLog/fetch`（路由 `any`，新后台用 GET 以免写审计日志），参数与返回见 [spec/users.md §17](spec/users.md)。用户端接口 `GET /api/v1/user/loginLog/fetch` 供主题使用。
+- 新后台：`#/user/login-log` 页面（今日成功/失败/注册与总数概览、邮箱/IP 前缀/类型/结果/日期筛选、展开查看完整 UA、移动端卡片），支持 `?user_id=`、`?email=`、`?ip=` 深链；用户列表行操作“登录记录”打开按用户过滤的弹窗；用户详情“最后登录IP”改为读取最近一次成功登录（`v2_user.last_login_ip` 上游从未写入，原来恒为 `-`）。
+- 未升级后端的面板：接口 404，页面显示“当前面板还没有登录记录接口”的降级提示，用户详情回退显示 `-`，不弹错误。
+- 数据库：新增迁移 `database/migrations/2026_10_29_000001_create_v2_user_login_log_table.php`（只新增表）。生产 `SKIP_APP_UPDATE=true` 时镜像启动不会自动迁移，升级后需执行 `docker compose exec xboard php artisan migrate --force`；回滚镜像不需要回滚迁移（旧代码不读该表）。
 
 ## 构建与发布
 
@@ -48,7 +58,7 @@
 - 验收：首页、公开配置接口、官方后台页、`/{secure_path}/next`、manifest 中全部静态资源、未登录访问管理接口返回 403，并经宿主机 Nginx 复核。
 - 回滚：恢复 `compose.yaml.before`，按同样的“停 worker → 重建 xboard → 等就绪 → 启 worker”顺序执行。
 
-本变更无数据库迁移、无配置变更、无新增外部服务。
+Admin Next 首次上线（2026-10-28，提交 `f9aed5e`）无数据库迁移、无配置变更、无新增外部服务。之后的登录记录功能（提交 `40bde40` 起）新增数据表 `v2_user_login_log`（升级后手动 `php artisan migrate --force`）和出站访问 `https://api.ip.sb`（主）与 `http://ip-api.com`（回退，明文 HTTP；均由队列任务发起，需要 Horizon 消费 `default` 队列；防火墙只放行其一时，另一家失败即回退或记为“解析失败”），见上文“登录记录”。
 
 ## 与官方后台的有意差异
 
@@ -57,7 +67,7 @@
 - 表格内拖拽排序统一改为“编辑排序”弹窗（拖拽 + 上下移，触屏可用），请求体与官方一致。
 - 支付方式编辑沿用官方行为回填密钥（不启用 `safe:1`），原因见下方后端问题 3。
 
-## 已知后端问题（审查中发现，仅记录，本次未改后端）
+## 已知后端问题（审查中发现，仅记录，未改后端）
 
 新后台已在前端规避或如实提示，修复需改后端：
 

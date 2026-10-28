@@ -72,6 +72,7 @@ export const menuGroups: MenuGroup[] = [
       { path: '/user/manage', title: '用户管理' },
       { path: '/user/ticket', title: '工单管理' },
       { path: '/user/traffic-reset-logs', title: '流量重置日志' }, // extra: official has the page but no menu entry
+      { path: '/user/login-log', title: '登录记录' }, // extra: needs the user/loginLog/fetch backend
     ],
   },
 ]

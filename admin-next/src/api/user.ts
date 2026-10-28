@@ -232,3 +232,83 @@ export interface StatUserRecord {
 export function fetchUserTrafficStats(params: { user_id: number; page: number; pageSize: number }) {
   return http.get<{ data: StatUserRecord[]; total: number }>('/stat/getStatUser', params)
 }
+
+// ---------------------------------------------------------------- login / register log
+
+/** login = 密码登录, register = 注册, mail_link = 邮件链接 / 快速登录链接. */
+export type LoginLogType = 'login' | 'register' | 'mail_link'
+/** pending = 解析中, resolved = 已解析, private = 内网/保留地址, failed = 解析失败. */
+export type LoginGeoStatus = 'pending' | 'resolved' | 'private' | 'failed'
+export type LoginDeviceType = 'desktop' | 'mobile' | 'tablet' | 'bot' | 'unknown'
+
+/** Geo lookup (ip.sb, ip-api.com fallback); only present when `geo_status === 'resolved'`. Names are English. */
+export interface LoginLogLocation {
+  country: string | null
+  /** ISO 3166-1 alpha-2, localise with Intl.DisplayNames. */
+  country_code: string | null
+  region: string | null
+  city: string | null
+  isp: string | null
+  asn: number | null
+}
+
+/** Parsed from the User-Agent on the backend. */
+export interface LoginLogDevice {
+  type: LoginDeviceType | string
+  os: string | null
+  browser: string | null
+  model: string | null
+}
+
+export interface LoginLog {
+  id: number
+  user_id: number
+  /** null when the user no longer exists. */
+  email: string | null
+  type: LoginLogType | string
+  /** false = wrong-password attempt (type login). */
+  success: boolean
+  ip: string
+  geo_status: LoginGeoStatus | string
+  location: LoginLogLocation | null
+  device: LoginLogDevice | null
+  /** Requesting site (Origin / Referer host[:port]). */
+  origin: string | null
+  /** Raw User-Agent: render as text only (never v-html). */
+  user_agent: string | null
+  /** Always false in the admin API. */
+  is_current: boolean
+  /** unix seconds */
+  created_at: number
+}
+
+export interface LoginLogQuery {
+  current: number
+  pageSize: number
+  user_id?: number | null
+  /** LIKE match on the user's email. */
+  email?: string | null
+  /** Prefix match. */
+  ip?: string | null
+  type?: LoginLogType | null
+  success?: 0 | 1 | null
+  /** unix seconds, inclusive */
+  start_at?: number | null
+  end_at?: number | null
+}
+
+/**
+ * GET /user/loginLog/fetch (route is `any`; GET keeps browsing out of the admin audit log).
+ * Paginated `{ total, current_page, per_page, last_page, data }`; empty filters are not sent.
+ * Panels without the login-log backend answer 404.
+ */
+export function fetchLoginLogs(params: LoginLogQuery, opts: { silent?: boolean } = {}) {
+  const query: Query = { current: params.current, pageSize: params.pageSize }
+  const keys = ['user_id', 'email', 'ip', 'type', 'success', 'start_at', 'end_at'] as const
+  for (const k of keys) {
+    const v = params[k]
+    if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) continue
+    query[k] = typeof v === 'string' ? v.trim() : v
+  }
+  return http.get<Paginated<LoginLog>>('/user/loginLog/fetch', query, opts)
+}

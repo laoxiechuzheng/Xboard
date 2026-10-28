@@ -1,15 +1,64 @@
 <script setup lang="ts">
 // User detail dialog built from the list row (spec §5). Money is already 元 in the row (official bug R-10 fixed).
-import { computed } from 'vue'
-import { NModal, NTag, NButton } from 'naive-ui'
-import type { UserRow } from '@/api/user'
-import { formatBytes, formatTime } from '@/utils/format'
+import { computed, ref, shallowRef, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { NModal, NTag, NButton, NIcon } from 'naive-ui'
+import { ArrowForwardOutline } from '@vicons/ionicons5'
+import { fetchLoginLogs, type LoginLog, type UserRow } from '@/api/user'
+import { formatBytes, formatTime, relativeTime } from '@/utils/format'
 import CopyText from '@/components/CopyText.vue'
 import ExpireTag from './ExpireTag.vue'
+import LoginIpCell from '../login-log/LoginIpCell.vue'
+import LoginLocationCell from '../login-log/LoginLocationCell.vue'
+import { deviceMeta, deviceText } from '../login-log/meta'
 import { commissionTypeLabel, formatAnyTime, formatIp, money, truthy } from './helpers'
 
 const props = defineProps<{ show: boolean; user: UserRow | null }>()
 const emit = defineEmits<{ 'update:show': [boolean]; 'filter-email': [string] }>()
+const router = useRouter()
+
+// v2_user.last_login_ip is never written upstream; the latest successful login log replaces it.
+const lastLog = shallowRef<LoginLog | null>(null)
+const lastLoading = ref(false)
+let lastSeq = 0
+watch(
+  () => [props.show, props.user?.id] as const,
+  async ([show, id]) => {
+    if (!show || !id) return
+    const my = ++lastSeq
+    lastLog.value = null
+    lastLoading.value = true
+    try {
+      const res = await fetchLoginLogs({ current: 1, pageSize: 1, user_id: id, success: 1 }, { silent: true })
+      if (my === lastSeq) lastLog.value = res.data?.[0] ?? null
+    } catch {
+      // Panels without the login-log backend (404) keep the plain fallback.
+      if (my === lastSeq) lastLog.value = null
+    } finally {
+      if (my === lastSeq) lastLoading.value = false
+    }
+  },
+  { immediate: true },
+)
+
+/** Mail-link logins do not update last_login_at upstream, so take the newer of the two. */
+const lastLoginAt = computed(() => Math.max(Number(props.user?.last_login_at) || 0, lastLog.value?.created_at ?? 0))
+const lastLoginRel = computed(() => {
+  if (!lastLoginAt.value) return ''
+  const rel = relativeTime(lastLoginAt.value)
+  return rel === formatTime(lastLoginAt.value) ? '' : rel
+})
+const lastDevice = computed(() => {
+  const d = lastLog.value?.device ?? null
+  return deviceText(d) || deviceMeta(d).label
+})
+
+function openLoginLog() {
+  const id = props.user?.id
+  if (!id) return
+  emit('update:show', false)
+  void router.push({ path: '/user/login-log', query: { user_id: String(id) } })
+}
 
 const status = computed(() => {
   const u = props.user
@@ -95,9 +144,32 @@ function openInviter() {
       </section>
 
       <section class="group">
-        <h4>活动信息</h4>
-        <div class="kv"><span class="k">最后登录</span><span class="v num">{{ formatTime(user.last_login_at) }}</span></div>
-        <div class="kv"><span class="k">最后登录IP</span><span class="v num">{{ formatIp(user.last_login_ip) }}</span></div>
+        <div class="group-head">
+          <h4>活动信息</h4>
+          <n-button text size="tiny" type="primary" icon-placement="right" @click="openLoginLog">
+            全部登录记录
+            <template #icon><n-icon><arrow-forward-outline /></n-icon></template>
+          </n-button>
+        </div>
+        <div class="kv">
+          <span class="k">最后登录</span>
+          <span class="v num">
+            {{ formatTime(lastLoginAt) }}
+            <span v-if="lastLoginRel" class="muted rel">（{{ lastLoginRel }}）</span>
+          </span>
+        </div>
+        <div class="kv">
+          <span class="k">最后登录IP</span>
+          <span class="v">
+            <span v-if="lastLoading" class="muted loading-text">正在读取登录记录…</span>
+            <span v-else-if="lastLog" class="last-login">
+              <login-ip-cell :ip="lastLog.ip" :lookup="lastLog.geo_status !== 'private'" />
+              <login-location-cell :geo-status="lastLog.geo_status" :location="lastLog.location" />
+              <span class="last-meta">{{ lastDevice }}<template v-if="lastLog.origin"> · {{ lastLog.origin }}</template></span>
+            </span>
+            <span v-else class="num">{{ formatIp(user.last_login_ip) }}</span>
+          </span>
+        </div>
         <div class="kv"><span class="k">最后在线</span><span class="v num">{{ formatAnyTime(user.last_online_at) }}</span></div>
         <div class="kv"><span class="k">在线设备</span><span class="v num">{{ user.online_count || 0 }}</span></div>
       </section>
@@ -156,6 +228,44 @@ function openInviter() {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-strong);
+}
+.group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rel {
+  font-size: 12px;
+}
+.last-login {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--hover-color);
+  max-width: 100%;
+}
+.last-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.loading-text {
+  animation: dd-blink 1.2s ease-in-out infinite;
+}
+@keyframes dd-blink {
+  50% {
+    opacity: 0.4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-text {
+    animation: none;
+  }
 }
 .kv {
   display: flex;

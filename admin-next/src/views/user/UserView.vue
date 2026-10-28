@@ -46,6 +46,7 @@ import {
   DownloadOutline,
   BanOutline,
   OptionsOutline,
+  FingerPrintOutline,
 } from '@vicons/ionicons5'
 import PageContainer from '@/components/PageContainer.vue'
 import AssignOrderDialog from '@/views/finance/order/AssignOrderDialog.vue'
@@ -79,6 +80,7 @@ import SendMailDialog from './user/SendMailDialog.vue'
 import BanUsersDialog from './user/BanUsersDialog.vue'
 import TrafficRecordDialog from './user/TrafficRecordDialog.vue'
 import TrafficResetDialog from './user/TrafficResetDialog.vue'
+import LoginLogDialog from './user/LoginLogDialog.vue'
 import {
   buildFilterFields,
   conditionLabel,
@@ -282,6 +284,8 @@ const trafficShow = ref(false)
 const trafficRow = ref<UserRow | null>(null)
 const resetShow = ref(false)
 const resetRow = ref<UserRow | null>(null)
+const loginLogShow = ref(false)
+const loginLogRow = ref<UserRow | null>(null)
 
 function openDetail(row: UserRow) {
   detailRow.value = row
@@ -312,6 +316,7 @@ const rowActions: DropdownOption[] = [
   { label: 'TA的订单', key: 'orders', icon: renderIcon(ReceiptOutline) },
   { label: 'TA的邀请', key: 'invites', icon: renderIcon(PeopleOutline) },
   { label: 'TA的流量记录', key: 'traffic', icon: renderIcon(StatsChartOutline) },
+  { label: '登录记录', key: 'login-log', icon: renderIcon(FingerPrintOutline) },
   { label: '重置流量', key: 'reset-traffic', icon: renderIcon(ReloadCircleOutline) },
   { label: '查看重置日志', key: 'reset-logs', icon: renderIcon(TimeOutline) },
   { label: '查看详情', key: 'detail', icon: renderIcon(InformationCircleOutline) },
@@ -350,6 +355,10 @@ async function onRowAction(key: string, row: UserRow) {
     case 'traffic':
       trafficRow.value = row
       trafficShow.value = true
+      break
+    case 'login-log':
+      loginLogRow.value = row
+      loginLogShow.value = true
       break
     case 'reset-traffic':
       resetRow.value = row
@@ -683,6 +692,10 @@ onMounted(async () => {
 <template>
   <page-container title="用户管理" description="在这里可以管理用户，包括增加、删除、编辑、查询等操作。">
     <template #extra>
+      <n-button secondary @click="router.push('/user/login-log')">
+        <template #icon><n-icon><finger-print-outline /></n-icon></template>
+        登录记录
+      </n-button>
       <n-button secondary @click="router.push('/user/traffic-reset-logs')">
         <template #icon><n-icon><time-outline /></n-icon></template>
         流量重置日志
@@ -859,6 +872,7 @@ onMounted(async () => {
     <assign-order-dialog v-model:show="assignShow" :email="assignEmail" @success="table.reload()" />
     <traffic-record-dialog v-model:show="trafficShow" :user-id="trafficRow?.id ?? null" :email="trafficRow?.email" />
     <traffic-reset-dialog v-model:show="resetShow" :user="resetRow" @success="table.reload()" />
+    <login-log-dialog v-model:show="loginLogShow" :user-id="loginLogRow?.id ?? null" :email="loginLogRow?.email" />
   </page-container>
 </template>
 

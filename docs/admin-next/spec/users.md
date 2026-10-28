@@ -55,6 +55,8 @@
 | 流量使用记录 | 弹窗（sm:max-w 700px） | 行操作「TA的流量记录」；**工单详情页也复用** | — |
 | 流量重置 | 弹窗（max-w-4xl，含 2 个 Tab） | 行操作「重置流量」 | — |
 | 删除确认 | AlertDialog（移动端为 Drawer） | 行操作「删除」 | — |
+| 登录记录 | 页面（**本 fork 新增**，官方无） | 侧边栏「用户管理 → 登录记录」、用户管理页右上「登录记录」按钮 | `/user/login-log`，支持 `?user_id=`、`?email=`、`?ip=`，见 §17 |
+| 用户登录记录 | 弹窗（**本 fork 新增**） | 行操作「登录记录」 | — |
 
 页面标题区：用户管理页 `h2` = `用户管理`，副标题 = `在这里可以管理用户，包括增加、删除、编辑、查询等操作。`；流量重置日志页 `h2` = `流量重置日志`，副标题 = `查看系统中所有流量重置操作的详细记录`。
 
@@ -255,6 +257,7 @@
 | 9 | 删除（红字） | 确认弹窗，标题 `确认删除用户`，内容 `此操作将永久删除用户 {email} 及其所有相关数据，包括订单、优惠码、流量记录、工单记录等信息。删除后无法恢复，是否继续？`，按钮 `取消` / `确认`（destructive）；成功 `data` 为真 → toast `删除成功` + 刷新；异常 → toast `删除失败` | `user/destroy`（§8） |
 
 - 语言包里有 `查看详情`（`actions_menu.view_details`）但官方菜单没有该项，详情只能点邮箱打开。【新UI】可加「查看详情」菜单项（可选）。
+- 【新UI】本 fork 在「TA的流量记录」之后加「登录记录」：打开按该用户过滤的登录记录弹窗（§17.4）。
 - 【新UI】「重置UUID及订阅URL」必须加确认弹窗（会立刻让用户原订阅链接失效），见风险 R-9。
 
 ---
@@ -422,7 +425,7 @@ POST user/update payload
 2. **订阅信息**：`订阅套餐`=plan?.name；`权限组`=group?.name；`到期时间`=null→`长期有效`，否则 `yyyy-MM-dd`，悬停提示同列表到期列（含 `下次重置时间`）；`设备限制`=device_limit||'-'；`速度限制`=speed_limit ? `${speed_limit} Mbps` : '-'。
 3. **流量信息**：`总流量`=formatBytes(transfer_enable) 或 '-'（0 也显示 '-'）；`上传已用`=formatBytes(u)；`下载已用`=formatBytes(d)；`总已用`=formatBytes(total_used)（主色）；分隔线；`上次重置`=formatDate(last_reset_at)；`下次重置`=formatDate(next_reset_at)；`重置次数`=reset_count||'0'。
 4. **财务信息**：`余额`、`佣金余额`、`佣金类型`、`佣金比例`。【BUG】官方 `余额 = ¥(balance/100).toFixed(2)`、`佣金余额` 同理，但行数据已经是元，结果被**再除 100**；`佣金比例 = (commission_rate×100).toFixed(2)%`（10 → `1000.00%`）；`佣金类型` 直接显示数字 0/1/2。【新UI】余额/佣金直接 `¥{toFixed(2)}`；佣金比例 `{commission_rate}%` 或 `跟随系统`；佣金类型显示 `跟随系统设置/循环返利/首次返利`。
-5. **活动信息**：`最后登录`=formatDate(last_login_at)；`最后登录IP`=last_login_ip||'-'（整数原样；【新UI】可尝试按 IPv4 整数转点分，或原样显示）；`最后在线`=formatDate(last_online_at)；`在线设备`=online_count||'0'。
+5. **活动信息**：`最后登录`=formatDate(last_login_at)；`最后登录IP`=last_login_ip||'-'（整数原样；【新UI】可尝试按 IPv4 整数转点分，或原样显示）；`最后在线`=formatDate(last_online_at)；`在线设备`=online_count||'0'。【后端】`last_login_ip` 上游从未写入，恒为 null；`last_login_at` 只在密码登录/注册时写入，邮件链接登录不更新。【新UI·本 fork】弹窗打开时请求 `user/loginLog/fetch?user_id={id}&success=1&pageSize=1`（silent），用最近一次成功登录显示 IP（复制 + ip.sb 链接）、归属地、设备与来源；`最后登录` 取 `max(last_login_at, 该记录 created_at)`；接口不存在（404）或无记录时回退原逻辑（显示 `-`）。分组标题右侧「全部登录记录」跳 `/user/login-log?user_id={id}`。
 6. **邀请信息**（仅 `invite_user` 存在）：`邀请人`=链接 `/user/manage?email={invite_user.email}`；`邀请人ID`=invite_user.id。
 7. **时间信息**：`创建时间`、`更新时间`（`yyyy-MM-dd HH:mm:ss`）。
 8. **订阅链接**（仅 `subscribe_url` 存在）：`订阅链接`=新窗口打开的 `<a>`（`noopener noreferrer`），可断行。
@@ -682,6 +685,7 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 | GET | `/server/group/fetch` | 是（结果未用） | 可省略 |
 | POST | `/order/assign` | 是（依赖） | 分配订单 |
 | GET | `/plugin/getPlugins` | 是（依赖） | 判断 `phone_auth` 插件是否 `is_installed && is_enabled`（决定手机号筛选项） |
+| GET(any) | `/user/loginLog/fetch` | 否（**本 fork 新增**） | 登录/注册记录分页列表（§17） |
 
 ---
 
@@ -697,3 +701,43 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 9. 流量重置弹窗：两 Tab、原因输入、400/500 错误提示、成功刷新列表与历史。
 10. 流量重置日志页：可用的列表/翻页（`pagination.total`）/筛选/导出（含 BOM）/正确时间格式。
 11. 可复用组件导出给工单域：编辑用户抽屉、流量记录弹窗。
+12. 登录记录（本 fork 扩展，§17）：页面筛选（防抖）/翻页/深链/展开 UA/移动端卡片，行操作弹窗，详情弹窗最后登录IP，后端 404 时降级提示且不弹错误。
+
+---
+
+## 17. 登录记录（本 fork 新增，官方无）
+
+> 后端提交 `40bde40`；新后台源码 `admin-next/src/views/user/LoginLogView.vue`、`views/user/login-log/*`、`views/user/user/LoginLogDialog.vue`，接口函数 `api/user.ts::fetchLoginLogs`。
+
+### 17.1 接口 `GET /user/loginLog/fetch`（路由 `any`，admin 中间件）
+- 【新UI】用 GET 调用，浏览记录不写审计日志（与 `user/fetch` 相同的考虑，见 R-17）；空筛选不发送。
+- 参数（`$request->validate`，非法返回 422）：`current`（≥1）、`pageSize`（1–200，默认 20）、`user_id`、`email`（用户邮箱 LIKE `%v%`）、`ip`（前缀匹配 `v%`）、`type`（`login|register|mail_link`）、`success`（`0/1`）、`start_at`、`end_at`（Unix 秒，含边界）。
+- 排序固定 `created_at desc, id desc`。响应为形态 B 分页：`{ total, current_page, per_page, last_page, data }`。
+- 行字段：
+  - `id`、`user_id`、`email`（用户已删除时为 null）
+  - `type`：`login` 密码登录 / `register` 注册 / `mail_link` 邮件链接或快速登录链接
+  - `success`：bool，`false` 为密码错误的登录尝试
+  - `ip`；`geo_status`：`pending` 解析中 / `resolved` / `private` 内网或保留地址 / `failed` 解析失败
+  - `location`：仅 `resolved` 时有值，`{ country, country_code, region, city, isp, asn }`，名称为归属地服务返回的英文（ip.sb，回退时为 ip-api.com）
+  - `device`：`{ type: desktop|mobile|tablet|bot|unknown, os, browser, model }`（后端解析 UA）
+  - `origin`：发起请求的站点（Origin 或 Referer 的 `host[:port]`），可能为 null
+  - `user_agent`：原始 UA，可能为 null，**只能文本插值显示，禁止 v-html**
+  - `is_current`：后台恒为 false；`created_at`：Unix 秒
+- 面板未升级（路由不存在）时 404。
+- 出站依赖与隐私（后端 `app/Services/LoginLogService.php`）：公网 IP 由队列任务先查 `https://api.ip.sb/geoip/{ip}`，失败（超时/非 2xx/无 `country_code`）时回退 `http://ip-api.com/json/{ip}`——**明文 HTTP，用户 IP 会发给第二家第三方服务**；内网/保留地址直接记为 `private`，不外发。结果按 IP 缓存 7 天，两家都失败缓存 1 分钟。新后台只生成指向 `ip.sb` 的外链，浏览器不直接请求任何归属地接口。
+
+### 17.2 页面 `/user/login-log`
+- 标题 `登录记录`；顶部 4 个概览卡片（各发一次 `pageSize=1` 请求读 `total`）：今日成功（`success=1&start_at=今日0点`）、今日失败（`success=0`）、今日注册（`type=register`）、全部记录；点击卡片套用对应筛选（全部记录 = 清除筛选），当前筛选与卡片一致时卡片高亮。
+- 工具栏：用户邮箱、IP 前缀（两者 400ms 防抖，回车立即生效）、类型（登录/注册/链接登录）、结果（成功/失败）、日期范围（快捷：今天/最近7天/最近30天；按浏览器时区换算为 `start_at=当日0点`、`end_at=结束日23:59:59`；浏览器时区的今天之后不可选；`close-on-select` 点第二个日期即生效，`update-value-on-close` 点外部关闭时保留已选；手机上 `global.css` 让日期范围面板只显示一个月历，翻月可跨月选择）、重置筛选、刷新。手机上（<768px）各行依次为：邮箱 / IP / 类型+结果+“重置”（文案缩短，靠 CSS `order` 排到选择框后）/ 日期范围+刷新，日期框宽度不随筛选状态变化。
+- 深链：`?user_id=`（URL 决定用户筛选，显示可关闭的“只看用户”标签，邮箱取自已加载的行）、`?email=`、`?ip=`。首次进入以及从页面外部改变 URL（侧边栏、前进后退、手改地址）时，URL 就是完整筛选状态：三个参数按 URL 设置，URL 里没有的输入框清空，类型/结果/日期也清空，避免残留输入悄悄收窄深链结果；页面自己写入的 URL（点用户、关闭用户标签、重置、概览卡片）只同步 `user_id`，不动其他筛选。
+- 列（桌面，`size=small`，宽度按 1440 屏 + 侧边栏约 1120px 不出现横向滚动调校，`归属地` 自适应）：展开箭头、时间（相对时间 + `MM-DD HH:mm`，悬停完整时间）、用户（点击 = 只看该用户，写入 `?user_id=`）、类型标签、结果（失败为错误色标签，失败行整行浅红底 + 左侧红条）、IP（点击 = 按该 IP 筛选；复制按钮；非内网 IP 显示 `https://ip.sb/geoip/<ip>` 外链，IP 先按契约正则校验，`rel="noopener noreferrer"`）、归属地（国家代码徽标 + `Intl.DisplayNames(['zh-CN'],{type:'region'})` 本地化国名 + region/city 去重；第二行 ISP 与 `AS<asn>` 链接 `https://ip.sb/whois/AS<asn>`；pending/private/failed 分别显示“归属地解析中…”/“内网 / 保留地址”/“解析失败”）、设备（按类型的图标，OS 一行，浏览器 · 型号一行）、来源。
+- 用户列悬停提示含完整邮箱（`<邮箱> · 点击只看该用户`），列宽不够截断时也能读到全文。
+- 展开行：完整 User-Agent（可复制）、精确时间、方式说明、来源站点、设备类型、原文归属地（归属地服务返回的英文）、运营商/ASN、ip.sb 归属地与 WHOIS 链接、记录 ID 与用户 ID。
+- 移动端（<768px）：卡片列表（类型/结果/时间、用户、IP、归属地、设备、来源，“User-Agent 与更多详情”折叠）+ 简洁分页（`simple`，沿用当前页大小，默认 20，手机上不提供页大小切换）。
+- 空/错误：有筛选时“没有符合条件的登录记录”，否则“暂无登录记录”；请求失败时表格内显示错误块与“重试”（404 文案：“当前面板还没有登录记录接口”），列表请求 silent，不弹 toast。
+
+### 17.3 用户详情弹窗
+见 §5 第 5 条【新UI·本 fork】。
+
+### 17.4 用户登录记录弹窗（行操作「登录记录」）
+- 契约同流量记录弹窗：props `{ show, userId, email? }`，emit `update:show`，只在打开时加载（`user_id` 过滤，页大小 10/20/50），列同 §17.2 但不含“用户”列；标题右侧“在登录记录页查看”跳 `/user/login-log?user_id={id}` 并关闭弹窗；描述行提示本页密码错误次数；移动端为卡片。
