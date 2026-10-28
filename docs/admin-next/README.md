@@ -39,11 +39,33 @@
 
 ## 生产部署与回滚（三站：98k / mg / yzy）
 
+当前状态（2026-10-28 核实）：三站 Web 镜像均为 `ghcr.io/laoxiechuzheng/xboard@sha256:59aef588044c4e6ce4a6a265b70a7f51e8b8857ca5a88801c40af50c1bcdf287`（提交 `f9aed5e`），`/{secure_path}/next` 与官方后台均验收通过；各站记录见站点目录 `AGENTS.md` 的 2026-10-28 Admin Next 条目，备份在 `backups/2026-10-28-admin-next/`。
+
 生产 Compose 只固定 Web 镜像 digest，`public/` 不挂载，所以新后台随镜像发布。按各站 `AGENTS.md` 的既有流程：
 
 - 备份：`backups/<日期>-admin-next/` 保存 `compose.yaml.before`、`AGENTS.md.before` 和 `README.txt`（新旧镜像、提交、回滚命令）。
-- 升级：只替换 `xboard` 服务的镜像 digest，执行 `docker compose up -d --no-deps xboard`；`ai-ticket-worker` 不动。
+- 升级：只替换 `xboard` 服务的镜像 digest；`ai-ticket-worker` 的镜像不动，但它使用 web 容器内嵌 Redis 的 socket，所以要先 `docker stop -t 60 <站点>-ai-ticket-worker-1`，再 `docker compose up -d --no-deps --pull never xboard`，等 HTTP 200 且 `redis-cli -s /data/redis.sock ping` 返回 PONG 后再 `docker start` worker（否则 worker 会在 Redis 加载期间反复重启）。
 - 验收：首页、公开配置接口、官方后台页、`/{secure_path}/next`、manifest 中全部静态资源、未登录访问管理接口返回 403，并经宿主机 Nginx 复核。
-- 回滚：`cp -p backups/<日期>-admin-next/compose.yaml.before compose.yaml && docker compose up -d --no-deps xboard`。
+- 回滚：恢复 `compose.yaml.before`，按同样的“停 worker → 重建 xboard → 等就绪 → 启 worker”顺序执行。
 
 本变更无数据库迁移、无配置变更、无新增外部服务。
+
+## 与官方后台的有意差异
+
+- 系统设置改为显式保存（悬浮保存条 + Ctrl/⌘+S，只提交改动字段，危险项二次确认），不做官方的 1 秒自动保存。
+- 代码/模板编辑使用等宽文本框（未引入 Monaco）；订阅模板的 YAML 只做结构检查，不做完整语法校验（需要新增依赖，未引入）。
+- 表格内拖拽排序统一改为“编辑排序”弹窗（拖拽 + 上下移，触屏可用），请求体与官方一致。
+- 支付方式编辑沿用官方行为回填密钥（不启用 `safe:1`），原因见下方后端问题 3。
+
+## 已知后端问题（审查中发现，仅记录，本次未改后端）
+
+新后台已在前端规避或如实提示，修复需改后端：
+
+1. `CouponController::update`：`catch` 中缺少 `DB::rollBack()`，id 不存在时事务泄漏到 Octane 常驻 worker。新后台改用 `coupon/show` 切换状态规避。
+2. `PaymentController::sort`：`Payment::find()` 为 null 时抛 `Error`，`catch (\Exception)` 捕不到，同样泄漏事务。新后台保存前重新拉取列表校验 id。
+3. `PaymentController::preserveEmptyPasswordConfig`：`ConvertEmptyStringsToNull` 把空串转为 null，留空的密钥字段会被清空；`catch (Exception)` 缺少命名空间。
+4. `app/Http/Requests/Admin/PlanSave.php`：`prices=null` 时 `foreach` 报 500。新后台无价格时发送 `{}`。
+5. `RequestLog` 敏感字段过滤不含 `email_password`、`server_token`、`telegram_bot_token`、插件 `config.*` 等，审计日志会记录明文；审计日志页已加提示。
+6. `system/getQueueMasters` 直接走 Horizon 的 `viewHorizon` 授权，生产环境恒为 403；系统状态页的 Horizon 进程区块显示降级提示。
+7. 礼品卡：`templates`/`codes` 接口忽略筛选排序、丢弃 `codes_count` 等统计字段；`calculateActualRewards` 对所有数值奖励乘节日倍率并取整；`disallowed_plans` 未实现。
+8. `ThemeController::upload` 检查的是 `base_path('theme')` 是否可写，而用户主题实际写入 `storage/theme`。
