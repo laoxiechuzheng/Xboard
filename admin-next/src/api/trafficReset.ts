@@ -1,4 +1,5 @@
-// Traffic reset APIs (spec users.md §11–§12). All responses are raw JSON without a status envelope.
+// Traffic reset APIs (spec users.md §11–§12, traffic cycle fields: docs/traffic-cycle/DESIGN.md §7.2).
+// All responses are raw JSON without a status envelope.
 import { http, type Query } from '@/api/http'
 
 export interface TrafficAmount {
@@ -25,6 +26,23 @@ export interface TrafficResetLog {
   metadata: Record<string, unknown> | null
   /** ISO8601 UTC */
   created_at: string
+  // Added by the traffic cycle backend; absent on older panels (see traffic-reset/normalize.ts).
+  /** Reason code (DESIGN §5); inferred from trigger_source for old rows. */
+  reason?: string | null
+  /** Old row that cleared 0 B: no information, hidden by default. */
+  is_noise?: boolean
+  cycle_id?: number | null
+  order_id?: number | null
+  admin_id?: number | null
+  note?: string | null
+  /** Bytes really cleared (metadata.cleared first, e.g. imported 换时 rows whose old_total is 0). */
+  cleared?: number | null
+  quota_before?: number | null
+  quota_after?: number | null
+  expired_before?: number | null
+  expired_after?: number | null
+  /** 换时: how much earlier the subscription now expires. */
+  shift_seconds?: number | null
 }
 
 export interface TrafficResetLogQuery {
@@ -38,6 +56,10 @@ export interface TrafficResetLogQuery {
   start_date?: string | null
   /** yyyy-MM-dd (inclusive, backend appends 23:59:59) */
   end_date?: string | null
+  /** 1 = drop noise rows (traffic cycle backend; older panels ignore it). */
+  hide_noise?: 0 | 1 | null
+  /** Reason code (DESIGN §5). */
+  reason?: string | null
 }
 
 export interface TrafficResetLogResponse {
@@ -46,25 +68,12 @@ export interface TrafficResetLogResponse {
 }
 
 /** GET /traffic-reset/logs. Empty filters are dropped (backend validates `in:` lists). */
-export function fetchTrafficResetLogs(q: TrafficResetLogQuery) {
+export function fetchTrafficResetLogs(q: TrafficResetLogQuery, opts: { silent?: boolean } = {}) {
   const params: Query = {}
   for (const [k, v] of Object.entries(q)) {
     if (v !== null && v !== undefined && v !== '') params[k] = v
   }
-  return http.get<TrafficResetLogResponse>('/traffic-reset/logs', params)
-}
-
-export interface TrafficResetStats {
-  total_resets: number
-  auto_resets: number
-  manual_resets: number
-  cron_resets: number
-}
-
-/** GET /traffic-reset/stats?days= (not used by the official admin). */
-export async function fetchTrafficResetStats(days: number) {
-  const res = await http.get<{ data: TrafficResetStats }>('/traffic-reset/stats', { days })
-  return res.data
+  return http.get<TrafficResetLogResponse>('/traffic-reset/logs', params, opts)
 }
 
 export interface UserResetHistoryItem {
@@ -102,42 +111,11 @@ export interface ResetUserResult {
 
 /**
  * POST /traffic-reset/reset-user. 400 when the user is banned/expired/has no plan.
- * Note: the backend currently drops `reason` (spec R-8), it is not stored in the log.
+ * The traffic cycle backend stores `reason` as the log's note (reason code admin_reset); older backends drop it
+ * (spec R-8).
  */
 export function resetUserTraffic(userId: number, reason?: string) {
   const body: { user_id: number; reason?: string } = { user_id: userId }
   if (reason && reason.trim()) body.reason = reason.trim()
   return http.post<ResetUserResult>('/traffic-reset/reset-user', body)
-}
-
-/** reset_type values accepted by the logs filter. */
-export const RESET_TYPE_OPTIONS = [
-  { label: '按月重置', value: 'monthly' },
-  { label: '每月1号重置', value: 'first_day_month' },
-  { label: '按年重置', value: 'yearly' },
-  { label: '每年1月1日重置', value: 'first_day_year' },
-  { label: '手动重置', value: 'manual' },
-  { label: '购买重置包', value: 'purchase' },
-]
-
-/** trigger_source values accepted by the logs filter (order / gift_card exist in data but fail validation). */
-export const TRIGGER_SOURCE_OPTIONS = [
-  { label: '自动触发', value: 'auto' },
-  { label: '手动触发', value: 'manual' },
-  { label: 'API调用', value: 'api' },
-  { label: '定时任务', value: 'cron' },
-  { label: '用户访问', value: 'user_access' },
-]
-
-/** Names for sources the backend leaves untranslated. */
-const EXTRA_SOURCE_NAMES: Record<string, string> = { order: '订单开通', gift_card: '礼品卡兑换' }
-
-export function triggerSourceLabel(source: string, name?: string | null): string {
-  if (name && name !== source) return name
-  return EXTRA_SOURCE_NAMES[source] ?? TRIGGER_SOURCE_OPTIONS.find((o) => o.value === source)?.label ?? (name || source)
-}
-
-export function resetTypeLabel(type: string, name?: string | null): string {
-  if (name && name !== type) return name
-  return RESET_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? (name || type)
 }

@@ -64,8 +64,27 @@ export interface OrderBase {
   commission_balance: number | null
   actual_commission_balance: number | null
   paid_at: number | null
+  /**
+   * Payment deadline of an admin-assigned order (order/assign `expire_hours`); null for orders users
+   * placed themselves, which are cancelled 2 hours after creation. Absent on panels without the field.
+   */
+  expires_at?: number | null
   created_at: number
   updated_at: number
+}
+
+/** Pending orders without `expires_at` are cancelled this long after creation (OrderHandleJob). */
+export const PENDING_ORDER_TTL = 7200
+
+/** When a pending order is cancelled automatically (DESIGN §4.4: expires_at ?? created_at + 7200). */
+export function paymentDeadline(o: Pick<OrderBase, 'expires_at' | 'created_at'>): number {
+  const exp = Number(o.expires_at)
+  return exp > 0 ? exp : Number(o.created_at) + PENDING_ORDER_TTL
+}
+
+/** expires_at is only written by order/assign. */
+export function isAssignedOrder(o: Pick<OrderBase, 'expires_at'>): boolean {
+  return Number(o.expires_at) > 0
 }
 
 export interface Order extends OrderBase {
@@ -154,6 +173,8 @@ export interface OrderAssignPayload {
   period: LegacyPeriod
   /** cents */
   total_amount: number
+  /** Payment window in hours (1–720); the backend defaults to 72. */
+  expire_hours?: number
 }
 
 /** POST /order/assign -> new trade_no. Creates a pending order; no price/balance checks. */

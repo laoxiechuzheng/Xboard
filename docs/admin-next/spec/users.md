@@ -57,6 +57,8 @@
 | 删除确认 | AlertDialog（移动端为 Drawer） | 行操作「删除」 | — |
 | 登录记录 | 页面（**本 fork 新增**，官方无） | 侧边栏「用户管理 → 登录记录」、用户管理页右上「登录记录」按钮 | `/user/login-log`，支持 `?user_id=`、`?email=`、`?ip=`，见 §17 |
 | 用户登录记录 | 弹窗（**本 fork 新增**） | 行操作「登录记录」 | — |
+| 流量周期与重置 | 页面（**本 fork 重做**，取代官方流量重置日志页） | 侧边栏「用户管理 → 流量周期与重置」、用户管理页右上同名按钮、行操作「查看重置记录」 | `/user/traffic-reset-logs`（`/user/traffic-reset` 重定向到此），支持 `?user_id=`、`?user_email=`，见 §18.2 |
+| 流量周期 | 右侧抽屉（**本 fork 新增**） | 行操作「流量周期」、用户详情「流量信息 → 流量周期」、流量周期与重置页点击用户或「周期 #id」 | —，见 §18.3 |
 
 页面标题区：用户管理页 `h2` = `用户管理`，副标题 = `在这里可以管理用户，包括增加、删除、编辑、查询等操作。`；流量重置日志页 `h2` = `流量重置日志`，副标题 = `查看系统中所有流量重置操作的详细记录`。
 
@@ -414,6 +416,7 @@ POST user/update payload
 - 金额提交保留两位小数（`Math.round(v*100)/100`），避免浮点误差。
 - `transfer_enable` 支持小数 GB（`Math.round(GB×1073741824)`）；`commission_rate/discount/speed_limit/device_limit` 的 0 应保留为 0 而不是 null（`device_limit=0` 语义需与节点端确认，见 R-12），空才是 null。
 - 目标用户为当前登录管理员本人时，取消 `is_admin` / 设为封禁需二次确认。
+- 【新UI·本 fork】改了 `plan_id / transfer_enable / expired_at / u / d` 任一项时显示“周期影响”区块并实时预览，保存时附带 `cycle_*` 参数，见 §18.4。
 
 ---
 
@@ -423,7 +426,7 @@ POST user/update payload
 
 1. **基本信息**：`邮箱`=email；`手机号`=phone||'-'（仅 `phone_auth_enabled`）；`UUID`=uuid（等宽小字）；`Token`=token（等宽小字）；`备注`=remarks；`Telegram ID`=telegram_id||'-'。
 2. **订阅信息**：`订阅套餐`=plan?.name；`权限组`=group?.name；`到期时间`=null→`长期有效`，否则 `yyyy-MM-dd`，悬停提示同列表到期列（含 `下次重置时间`）；`设备限制`=device_limit||'-'；`速度限制`=speed_limit ? `${speed_limit} Mbps` : '-'。
-3. **流量信息**：`总流量`=formatBytes(transfer_enable) 或 '-'（0 也显示 '-'）；`上传已用`=formatBytes(u)；`下载已用`=formatBytes(d)；`总已用`=formatBytes(total_used)（主色）；分隔线；`上次重置`=formatDate(last_reset_at)；`下次重置`=formatDate(next_reset_at)；`重置次数`=reset_count||'0'。
+3. **流量信息**：`总流量`=formatBytes(transfer_enable) 或 '-'（0 也显示 '-'）；`上传已用`=formatBytes(u)；`下载已用`=formatBytes(d)；`总已用`=formatBytes(total_used)（主色）；分隔线；`上次重置`=formatDate(last_reset_at)；`下次重置`=formatDate(next_reset_at)；`重置次数`=reset_count||'0'。【新UI·本 fork】分组标题右侧「流量周期」打开 §18.3 抽屉。
 4. **财务信息**：`余额`、`佣金余额`、`佣金类型`、`佣金比例`。【BUG】官方 `余额 = ¥(balance/100).toFixed(2)`、`佣金余额` 同理，但行数据已经是元，结果被**再除 100**；`佣金比例 = (commission_rate×100).toFixed(2)%`（10 → `1000.00%`）；`佣金类型` 直接显示数字 0/1/2。【新UI】余额/佣金直接 `¥{toFixed(2)}`；佣金比例 `{commission_rate}%` 或 `跟随系统`；佣金类型显示 `跟随系统设置/循环返利/首次返利`。
 5. **活动信息**：`最后登录`=formatDate(last_login_at)；`最后登录IP`=last_login_ip||'-'（整数原样；【新UI】可尝试按 IPv4 整数转点分，或原样显示）；`最后在线`=formatDate(last_online_at)；`在线设备`=online_count||'0'。【后端】`last_login_ip` 上游从未写入，恒为 null；`last_login_at` 只在密码登录/注册时写入，邮件链接登录不更新。【新UI·本 fork】弹窗打开时请求 `user/loginLog/fetch?user_id={id}&success=1&pageSize=1`（silent），用最近一次成功登录显示 IP（复制 + ip.sb 链接）、归属地、设备与来源；`最后登录` 取 `max(last_login_at, 该记录 created_at)`；接口不存在（404）或无记录时回退原逻辑（显示 `-`）。分组标题右侧「全部登录记录」跳 `/user/login-log?user_id={id}`。
 6. **邀请信息**（仅 `invite_user` 存在）：`邀请人`=链接 `/user/manage?email={invite_user.email}`；`邀请人ID`=invite_user.id。
@@ -513,6 +516,7 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 
 - 后端 `OrderAssign`：`plan_id required`（订阅不能为空）、`email required`（邮箱不能为空）、`total_amount required`（支付金额不能为空）、`period required|in:month_price,quarter_price,half_year_price,year_price,two_year_price,three_year_price,onetime_price,reset_price`（订阅周期不能为空/订阅周期格式有误）。用户不存在 400 `该用户不存在`；套餐不存在 400 `该订阅不存在`；用户有未完成订单 400 `该用户还有待支付的订单，无法分配`；订单类型自动判定（重置包/升级/续费/新购）；返回 `data: trade_no`。成功 toast `添加成功`，关闭并重置。
 - 本域行操作调用时官方未传 refetch。订单细节以 orders 规格为准。
+- 【新UI·本 fork】表单另有“支付有效期”（提交 `expire_hours`，默认 72 小时），见 commerce.md §3.6。
 
 ## 10. 流量使用记录弹窗 → `stat/getStatUser`
 - 标题 `流量使用记录`（`traffic:trafficRecord.title`）。打开后才请求（关闭时不请求）。
@@ -545,6 +549,7 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
   - 卡片 `重置记录`（副标题 `最近10次重置记录`，高 300px 滚动）：每条显示两个徽标 `reset_type_name`（outline）、`trigger_source_name`（secondary），`重置时间`=formatDate(reset_time)，`清除流量`=old_traffic.formatted（红）；空 `暂无重置记录`。
 - 提交：`POST traffic-reset/reset-user {user_id, reason: reason.trim() || undefined}`；响应 `data` 存在 → toast `流量重置成功`，关闭、清空原因、刷新用户列表。失败由拦截器 toast 后端 `message`。
 - 【官方缺陷】重置成功后历史查询缓存（key `['trafficResetHistory', id]`）不失效，再次打开可能看到旧历史。【新UI】打开时总是重新请求。
+- 【新UI·本 fork】提醒改为与流量周期后端一致：`流量重置操作不可逆，请谨慎操作`、`只清零本周期的已用流量（上传和下载），重置次数 +1；当前周期、下次重置时间和到期时间都不变`、`清零的流量和填写的原因会记录在“流量周期与重置”页`；原因提示 `此字段为可选项，填写后作为备注写入重置记录（旧版后端不保存）`。已用流量为 0 时不标红，并提示“该用户当前已用流量为 0，重置不会清除任何流量，也不会产生重置记录”（后端清零 0 B 不写日志、不加重置次数，DESIGN §4.2）。
 
 ### 11.2 `POST traffic-reset/reset-user`
 - 校验：`user_id required|integer|exists:v2_user,id`；`reason nullable|string|max:255`（422）。
@@ -570,6 +575,8 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 ---
 
 ## 12. 流量重置日志页（`/user/traffic-reset-logs`，隐藏路由）
+
+> 【新UI·本 fork】本节记录官方页面与原接口。新后台已按 §18.2 重做为“流量周期与重置”，接口新增的参数与字段见 §18.1。
 
 ### 12.1 接口 `GET traffic-reset/logs`
 - 查询参数（后端校验）：`user_id nullable|integer`、`user_email nullable|string`（`whereHas user email like %v%`）、`reset_type nullable|in:monthly,first_day_month,yearly,first_day_year,manual,purchase`、`trigger_source nullable|in:auto,manual,api,cron,user_access`（**不含实际会出现的 `order`、`gift_card`**）、`start_date nullable|date`（`reset_time >= start_date`）、`end_date nullable|date|after_or_equal:start_date`（`reset_time <= end_date 23:59:59`）、`per_page nullable|integer|min:1|max:10000`（默认 20）、`page nullable|integer|min:1`。
@@ -686,6 +693,8 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 | POST | `/order/assign` | 是（依赖） | 分配订单 |
 | GET | `/plugin/getPlugins` | 是（依赖） | 判断 `phone_auth` 插件是否 `is_installed && is_enabled`（决定手机号筛选项） |
 | GET(any) | `/user/loginLog/fetch` | 否（**本 fork 新增**） | 登录/注册记录分页列表（§17） |
+| GET | `/user/trafficCycle/fetch` | 否（**本 fork 新增**） | 用户流量周期时间线（§18.1） |
+| GET | `/user/trafficCycle/preview` | 否（**本 fork 新增**） | 编辑用户的周期预览，只计算不落库（§18.1） |
 
 ---
 
@@ -702,6 +711,7 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 10. 流量重置日志页：可用的列表/翻页（`pagination.total`）/筛选/导出（含 BOM）/正确时间格式。
 11. 可复用组件导出给工单域：编辑用户抽屉、流量记录弹窗。
 12. 登录记录（本 fork 扩展，§17）：页面筛选（防抖）/翻页/深链/展开 UA/移动端卡片，行操作弹窗，详情弹窗最后登录IP，后端 404 时降级提示且不弹错误。
+13. 流量周期（本 fork 扩展，§18）：重置记录原因说人话、默认隐藏冗余记录、额度/到期前后变化与关联、统计不含冗余、移动端卡片；三个入口的周期抽屉；编辑抽屉“周期影响”的默认选项、实时预览与只在出现时发送 `cycle_*`；接口 404 时各处降级且不弹错误。
 
 ---
 
@@ -741,3 +751,53 @@ UI：标题 `发送邮件`，描述 `向所选或已筛选的用户发送邮件`
 
 ### 17.4 用户登录记录弹窗（行操作「登录记录」）
 - 契约同流量记录弹窗：props `{ show, userId, email? }`，emit `update:show`，只在打开时加载（`user_id` 过滤，页大小 10/20/50），列同 §17.2 但不含“用户”列；标题右侧“在登录记录页查看”跳 `/user/login-log?user_id={id}` 并关闭弹窗；描述行提示本页密码错误次数；移动端为卡片。
+
+---
+
+## 18. 流量周期（本 fork 新增，官方无）
+
+> 后端契约：`docs/traffic-cycle/DESIGN.md`（规则 §3、原因代码 §5、接口 §7）。新后台源码：`admin-next/src/api/trafficCycle.ts`、`api/trafficReset.ts`、`views/user/TrafficResetView.vue`、`views/user/traffic-reset/*`、`views/user/traffic-cycle/*`，编辑抽屉 `views/user/user/UserEditDrawer.vue`，重置弹窗 `views/user/user/TrafficResetDialog.vue`。无后端时可用开发 mock（`admin-next/dev/mock-api.ts`，见 DEVELOPING.md）。
+
+### 18.1 接口（前缀 `/api/v2/{secure_path}`）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `user/trafficCycle/fetch?user_id=&history_page=&history_size=&events_size=` | 用户周期时间线，结构同 DESIGN §7.1；后台版 `events` 含冗余行（`is_noise`）、`metadata` 原文和 `admin_id`，另返回 `user` 快照（`transfer_enable/u/d/expired_at/next_reset_at/last_reset_at/reset_count`）。用 GET，不写审计日志。 |
+| GET | `user/trafficCycle/preview` | 编辑用户的周期预览，只计算不落库。参数：`id` + 改动了的 `plan_id/transfer_enable/expired_at/u/d`（null 发空串：`expired_at=` 表示长期有效，`plan_id=` 表示取消套餐）+ `cycle_*`。返回 `{current, upcoming, effects, warnings}`；`effects`/`warnings` 元素为 `{type, ...细节}`（也兼容纯字符串），`warnings` 里 `type=invalid` 带 `message`，表示按当前参数保存会被 422 拒绝。 |
+| POST | `user/update` | 新增可选 `cycle_mode`（`keep`/`restart`）、`cycle_quota_scope`（`cycle`/`standing`）、`cycle_ends_at`（unix 秒，仅 `restart`）、`cycle_note`（≤120 字，空串 = 删除备注）。都不传 = 旧行为。 |
+| GET | `traffic-reset/logs` | 新增参数 `hide_noise`（1 = 去掉冗余行）、`reason`（原因代码）；每行新增 `reason`、`is_noise`、`cycle_id`、`order_id`、`admin_id`、`note`、`cleared`（真实清零量）、`quota_before/after`、`expired_before/after`、`shift_seconds`。 |
+
+- 未升级的面板：周期接口 404。前端用 `isLedgerMissing` 判断（排除 `No query results for model` 这种“用户不存在”的 404），各处显示“后端未升级”，请求都是 silent，不弹 toast。
+- 日志行没有新字段时前端按 DESIGN §4.2 自行推断：`metadata.reason` 是原因代码就用它，否则按 `trigger_source` 推断（`cron/auto/user_access` → 周期到期，`order` → 订单开通，`manual/api` → 管理员重置，`gift_card` → 礼品卡）；`old_total = 0` 且没有原因代码 = 冗余记录。
+- `metadata.reason` 不是原因代码时（旧版手动重置把管理员填写的原因原文存在这里），原因仍按触发来源推断，原文作为备注显示。升级后的后端把手动重置的原因写成 `note`（原因代码 `admin_reset`）。
+
+### 18.2 页面“流量周期与重置”（`/user/traffic-reset-logs`）
+- 菜单与标题“流量周期与重置”；旧地址 `/user/traffic-reset` 重定向到此（保留 query）。深链 `?user_id=`（显示可关闭的“只看用户”标签）、`?user_email=`。
+- 概览（近 30 天，每项一次 `per_page=1` 请求读 `pagination.total`）：有效重置（`hide_noise=1`）、周期到期（`reason=cycle_rollover`）、提前换时（`reason=auto_advance`）、冗余记录（全部 − 有效）。点击卡片套用对应筛选（“冗余记录”= 打开“显示冗余记录”看全部），当前筛选与卡片一致时高亮。后端未升级时不显示。
+- 工具栏：用户邮箱（400ms 防抖，`#123` 表示按用户 ID）、原因（DESIGN §5 的 12 个日志原因）、触发来源（只列后端校验接受的 `cron/user_access/manual/auto/api`）、日期范围（快捷：今天/最近7天/最近30天）、重置筛选、“显示冗余记录”开关（默认关，发送 `hide_noise=1`；文字也可点击切换）、刷新；右上“导出记录”（当前筛选，最多 10000 条，CSV 带 BOM，列含原因说明、是否冗余、清零、额度与到期前后、到期前移、周期/订单/管理员 ID、备注）。
+- 列（官方的“重置类型 / 触发源 / 记录时间”列已去掉，触发来源移到展开行）：展开、时间（`MM-DD HH:mm` + 日志 ID，悬停完整时间与相对时间）、用户（点击打开该用户的流量周期抽屉）、原因（标签 + 一句话说明；推断出来的旧记录带“旧记录”标记；冗余行显示灰色“冗余记录”标签“…· 没有实际清零”并整行淡化）、清零（`cleared`，0 灰显）、额度（前 → 后，相同只显示一个）、到期时间（前 → 后；换时显示“提前 X 天”，否则按差值显示延后/提前）、关联与备注（“周期 #id”打开抽屉并高亮该周期；“订单 #id”→ `/finance/order?order_id=`；“管理员 #id”→ `/user/manage?id=`；管理员备注两行截断）。
+- 展开行：原因说明、清零（含上行/下行）、触发来源（中文 + 原值）、额度、到期、重置时间、写入时间（与重置时间不同时）、关联、旧字段“重置类型”、记录与用户 ID、备注，以及原始 metadata（只做文本显示，可复制）。
+- 移动端（<768px）：卡片（原因、时间与 ID、用户、清零、额度、到期、关联，“详情与原始数据”折叠）+ 简洁分页。
+- 后端未升级：表格上方提示“当前面板还没有流量周期功能（后端未升级）……”，原因筛选和冗余开关禁用，冗余行只能淡化显示。
+- 用户行操作「重置流量」弹窗的“重置历史”也用同样的原因标签、清零量、日志 ID 和备注（冗余行淡化）。
+
+### 18.3 流量周期抽屉
+- 契约：props `{ show, userId, email?, highlightCycleId? }`，emit `update:show`；只在打开时请求（`history_size=10`、`events_size=20`），同时拉套餐列表用于把事件里的套餐 ID 显示成名称。入口见 §1。
+- 标题：“流量周期 #ID 邮箱”，右侧刷新、“重置记录”（跳 `/user/traffic-reset-logs?user_id=` 并关闭抽屉）。
+- 概览：套餐与标准额度、重置方式（按月/按年注明“以到期时间为锚，每个周期至少 N 天”）、订阅到期与剩余时间、已重置次数与上次重置时间。
+- 当前周期卡：标准/特殊周期标签（特殊 = 只给本周期设的额度）、最终周期“至到期”标签、第几个周期与开始原因、周期 ID；额度、已用/剩余与百分比进度条；开始 → 结束时间轴（“现在”标记）与“X 后重置 / 还剩 X，到期后不再重置”；下个周期额度（等于套餐流量时注明“套餐标准”），最终周期显示“本周期至到期，不再重置”（下个周期额度不同则补“续费后下个周期额度 X”）；备注（用户可见）；本周期事件（续费、额度调整、到期调整、排期调整、已用清零、套餐变更、备注更新，带操作来源与订单链接；订单触发的事件只显示订单链接，不再重复“订单”二字）。
+- 后续排期（最多 12 个，额度与当前周期不同的高亮，最后一个标“到期结束”）；没有排期时说明原因（长期有效 / 不重置 / 本周期就是最后一个；本周期内改成长期有效时为“本周期到点照常重置，之后不再排期”）。
+- 换时规则：插件启用时说明“流量用尽且剩余有效期 ≥ N 天时立即开启下一周期，到期时间前移本周期未用完的时长”，并给出“当前若用尽”能否换时（可以：前移多少、新到期时间、新周期额度；不行：原因，如剩余有效期不足、本周期就是最后一个）；未启用时说明需要等本周期结束。
+- 历史周期：时间线（最新在前），每条显示第几个周期、标准/特殊、额度、起止时间（原计划结束时间不同时在悬停里注明）、“开始原因 → 结束原因”、用量与占比、备注；“加载更早的周期”翻页。
+- 重置记录：日志 ID、时间、原因、清零量、额度/到期变化、备注，点开显示完整字段与原始 metadata；冗余记录默认隐藏，有冗余行时出现“显示冗余记录（N）”开关；超过 20 条可“显示更多”（50 条）或去重置记录页看全部。
+- 404：“当前面板还没有流量周期接口”+“查看该用户的重置记录”；其他错误显示错误块和“重试”。有套餐且未过期却没有当前周期时，提示可能还没有执行数据库迁移。
+
+### 18.4 编辑用户抽屉的“周期影响”
+- 出现条件：`plan_id / transfer_enable / expired_at / u / d` 任一项改动（在“订阅与流量”分组下方）。只有它出现时，保存才在 `user/update` 里附带 `cycle_*`；`cycle_*` 不计入“有没有修改”的判断。
+- 本周期：从现在重新开始（`restart`）/ 保留当前周期（`keep`）。默认：已用流量改成 0，且同时改了套餐、到期时间或流量 → `restart`，否则 `keep`。`restart` 会结束旧周期（记为“被替换”）、从保存时开启新周期并清零已用流量（上面改了已用流量时按填写值）。保存后没有有效套餐或已过期、或者当前没有周期时不显示选项，改为说明文字，发送 `keep`。
+- 新额度（改了流量且保存后仍有效时）：仅本周期（`cycle`，特殊周期，下周期恢复套餐标准，无套餐时恢复修改前的常备额度）/ 长期（`standing`）。默认：目标套餐有周期价格（月付到三年付任一 > 0）且新额度 ≠ 套餐流量 → 仅本周期。
+- 本周期结束（`restart` 时）：日期时间选择器默认显示预览算出的结束时间（`planEnd(now, 到期)`），手动改后发 `cycle_ends_at`，可“恢复自动”；只能选今天到到期日。
+- 周期备注：预填当前周期备注，与原值不同才发送 `cycle_note`（清空 = 删除备注）；说明“用户端和 AI 客服都能看到”。
+- 管理员手动点过的选项不再被默认值覆盖。
+- 预览：参数变化后 400ms 防抖请求 `user/trafficCycle/preview`（旧请求结果作废）。显示改后的本周期卡（虚线边框，同 §18.3 当前周期卡）、后续排期（最多 4 个）、效果列表（按“重新开始 → 额度 → 本周期结束时间 → 订阅到期 → 套餐 → 已用流量”排序的中文说明）、警告（黄色：结束晚于到期、结束早于现在、短于最短周期、额度小于已用、没有套餐；结束早于现在时后端同时发的负时长 `short_cycle` 不显示）、会被拒绝的原因（红色“无法保存：…”，放在预览最上方，`invalid` 的 `message` 里的 `cycle_ends_at` 显示为“本周期结束时间”，此时预览卡淡化）。预览与当前填写一致且有会被拒绝的原因时，点“提交”只提示“周期影响：…”，不发请求（避免 422）。`restart` 自动清零时（`usage_cleared`，`reason=admin_restart`），预览卡按清零后的已用显示。保存后改成长期有效、没有后续排期时，预览注明“本周期到点照常重置，之后不再排期”。
+- 例（芒果云工单 #6982 类）：套餐 → 天穹旗舰、流量 40 GB、到期点“一个月”、已用上行/下行改 0 → 默认“从现在重新开始”+“仅本周期”，预览为 40 GB 特殊周期直到到期（至到期、不再重置），续费后下个周期 100 GB（套餐标准）；保存请求体为改动字段 + `cycle_mode=restart`、`cycle_quota_scope=cycle`。
+- 后端未升级（404）：显示“当前面板还没有流量周期功能（后端未升级），保存时不会发送周期参数”，按原逻辑保存。

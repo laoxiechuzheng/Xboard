@@ -3,6 +3,7 @@
 // Contract: props { show, userId, user? }, emits update:show, saved.
 // Always reloads the row by id on open (ticket rows lack `invite_user`), submits only changed
 // fields, and always includes `invite_user_email` so the backend never clears it (spec R-1).
+// Changing plan / quota / expiry / usage shows the 周期影响 section; its cycle_* params are sent only then.
 import { computed, reactive, ref, watch } from 'vue'
 import {
   NDrawer,
@@ -34,10 +35,12 @@ import {
   type UserRow,
   type UserUpdatePayload,
 } from '@/api/user'
+import type { CycleUserChanges } from '@/api/trafficCycle'
 import { GB, formatTime } from '@/utils/format'
 import { appState } from '@/stores/app'
 import { authState } from '@/stores/auth'
 import { confirm, message } from '@/utils/discrete'
+import CycleImpact from '../traffic-cycle/CycleImpact.vue'
 import { COMMISSION_TYPE_OPTIONS, truthy } from './helpers'
 
 const props = withDefaults(defineProps<{ show: boolean; userId: number | null; user?: UserRow | null }>(), {
@@ -219,6 +222,19 @@ const bannedValue = computed({
 const planChanged = computed(() => changed('plan_id'))
 const expirePast = computed(() => form.expired_at !== null && form.expired_at < Date.now())
 
+// Pending values that affect the traffic cycle, in API units (bytes / unix seconds).
+const cycleChanges = computed<CycleUserChanges>(() => {
+  const c: CycleUserChanges = {}
+  if (changed('plan_id')) c.plan_id = form.plan_id
+  if (changed('transfer_enable') && form.transfer_enable !== null) c.transfer_enable = Math.round(form.transfer_enable * GB)
+  if (changed('expired_at')) c.expired_at = form.expired_at === null ? null : Math.floor(form.expired_at / 1000)
+  if (changed('u') && form.u !== null) c.u = Math.round(form.u * GB)
+  if (changed('d') && form.d !== null) c.d = Math.round(form.d * GB)
+  return c
+})
+const showCycleImpact = computed(() => !!row.value && Object.keys(cycleChanges.value).length > 0)
+const impactRef = ref<InstanceType<typeof CycleImpact> | null>(null)
+
 // A cleared number box is null: block submit instead of silently writing 0 (official: NaN fails validation).
 const requiredNumber = (label: string): FormItemRule => ({
   trigger: ['blur', 'input'],
@@ -293,6 +309,7 @@ function buildPayload(): UserUpdatePayload {
     if (changed('country_code')) p.country_code = form.country_code
     if (changed('phone')) p.phone = form.phone.trim() || null
   }
+  if (showCycleImpact.value) Object.assign(p, impactRef.value?.params() ?? {})
   return p
 }
 
@@ -304,9 +321,14 @@ async function submit() {
     return
   }
   const payload = buildPayload()
-  const keys = Object.keys(payload).filter((k) => k !== 'id' && k !== 'invite_user_email')
+  const keys = Object.keys(payload).filter((k) => k !== 'id' && k !== 'invite_user_email' && !k.startsWith('cycle_'))
   if (!keys.length && !inviterChanged.value) {
     message.info('没有需要保存的修改')
+    return
+  }
+  const cycleBlocker = showCycleImpact.value ? impactRef.value?.blocker() : ''
+  if (cycleBlocker) {
+    message.error(`周期影响：${cycleBlocker}`)
     return
   }
 
@@ -477,6 +499,14 @@ const titleSuffix = computed(() => (row.value ? `#${row.value.id}` : ''))
               </n-input-number>
             </n-form-item-gi>
           </n-grid>
+          <cycle-impact
+            v-if="showCycleImpact && row"
+            ref="impactRef"
+            :user-id="row.id"
+            :row="row"
+            :changes="cycleChanges"
+            :plans="plans"
+          />
 
           <n-divider />
           <div class="section-title">财务与返利</div>

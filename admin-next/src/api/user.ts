@@ -1,5 +1,6 @@
 // User management APIs (spec users.md §2–§10).
 import { http, type Query } from '@/api/http'
+import type { CycleUpdateParams } from '@/api/trafficCycle'
 
 /** Row returned by user/fetch (`transformUserData`): money already in 元, traffic in bytes, times in unix seconds. */
 export interface UserRow {
@@ -122,8 +123,11 @@ export async function countUsers(filter?: UserFilter[]): Promise<number> {
   return Number(res.total ?? 0)
 }
 
-/** POST /user/update payload: `id` plus changed fields. balance/commission_balance in 元, traffic in bytes. */
-export interface UserUpdatePayload {
+/**
+ * POST /user/update payload: `id` plus changed fields. balance/commission_balance in 元, traffic in bytes.
+ * cycle_* (traffic cycle backend) are only sent when the edit drawer shows its 周期影响 section.
+ */
+export interface UserUpdatePayload extends CycleUpdateParams {
   id: number
   email?: string
   invite_user_email?: string | null

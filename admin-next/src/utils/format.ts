@@ -87,6 +87,17 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
 
+/** Time left as "30 天 23 小时" / "5 小时 12 分钟" / "12 分钟" (two largest units, at least 1 分钟). */
+export function formatRemaining(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d > 0) return h ? `${d} 天 ${h} 小时` : `${d} 天`
+  if (h > 0) return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`
+  return `${Math.max(1, m)} 分钟`
+}
+
 /** ms timestamp (naive-ui pickers) <-> unix seconds */
 export function msToSeconds(ms: number | null | undefined): number | null {
   return ms === null || ms === undefined ? null : Math.floor(ms / 1000)

@@ -63,6 +63,21 @@ XBOARD_DEV_BACKEND=http://127.0.0.1:17999
 
 改完源码后必须 `pnpm build` 并把 `public/assets/admin-next/` 的变化一起提交——生产镜像直接打包该目录，不在 Docker 构建中跑 Node。
 
+### 用开发 mock 调界面
+
+后端还没有某个接口、或不想连测试实例时，可以让 `pnpm dev` 用 `admin-next/dev/mock-api.ts` 应答 `/api`（内存假数据，不转发到 `XBOARD_DEV_BACKEND`）：
+
+```
+# admin-next/.env.development.local，或启动前设成环境变量
+XBOARD_DEV_MOCK=1        # 已升级的后端（流量周期接口、日志新字段、订单 expires_at）
+XBOARD_DEV_MOCK=legacy   # 未升级的后端：周期接口 404、日志和订单没有新字段
+```
+
+- 任意账号密码都能登录（mock 直接返回 token），也可以在浏览器 localStorage 里预置 `XBOARD_ACCESS_TOKEN`。
+- 覆盖的接口：套餐、用户列表与编辑、流量重置日志与用户重置历史、`user/trafficCycle/fetch|preview`、订单列表/详情/分配；其余接口返回 404（仪表盘等页面会显示加载失败）。`user/update` 和 `order/assign` 收到的请求体可在 `GET /__mock/last-writes` 查看。
+- 示例用户：`mango3711@example.com`（工单 #6982 那种 40 GB 特殊周期 + 续费）、`mango3720@example.com`（转换前的中型芒果用户，用来演示编辑抽屉的“周期影响”）、`flagship2048@example.com`（换时）、`forever5120@example.com`（长期有效）。
+- `vite.config.ts` 只在 `vite dev`（`command === 'serve'`）时加载这个插件，构建产物里没有 mock 代码；改完 mock 文件 Vite 会自动重启开发服务器。
+
 ## 新增一个页面
 
 1. `src/api/<module>.ts` 写接口函数和类型。

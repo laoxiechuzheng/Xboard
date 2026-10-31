@@ -9,6 +9,10 @@ export interface PlanBrief {
   sell: boolean | number
   renew: boolean | number
   prices: Record<string, number | null> | null
+  /** GB */
+  transfer_enable?: number | null
+  /** null = follow the system setting */
+  reset_traffic_method?: number | null
   [key: string]: unknown
 }
 
@@ -41,8 +45,8 @@ export interface NodeBrief {
 }
 
 /** GET /plan/fetch -> success envelope, array sorted by `sort`. */
-export function fetchPlanOptions() {
-  return http.get<PlanBrief[]>('/plan/fetch')
+export function fetchPlanOptions(opts: { silent?: boolean } = {}) {
+  return http.get<PlanBrief[]>('/plan/fetch', undefined, opts)
 }
 
 /** GET /server/group/fetch -> success envelope, array. */

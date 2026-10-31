@@ -363,6 +363,7 @@
 - 响应（paginate 格式）：`{total, current_page, per_page, last_page, data:[订单]}`。每个订单：`v2_order` 全部列 + 关联：
   - 列：`id, invite_user_id, user_id, plan_id, coupon_id, payment_id, type, period(旧格式), trade_no, callback_no, total_amount, handling_amount, discount_amount, surplus_amount, surplus_credit, balance_amount, surplus_order_ids(array|null), status, commission_status, commission_balance, actual_commission_balance, paid_at, created_at, updated_at`。
   - 【风险】本 fork 迁移 `2026_05_30_000000_rename_refund_amount_to_surplus_credit` 把 `refund_amount` 改名为 `surplus_credit`（升级订单折抵后多出的金额，开通时加回用户余额）。官方 UI 仍读 `refund_amount`，永远显示 ¥0.00。
+  - 【本 fork】迁移 `2026_11_01_000002_add_expires_at_to_v2_order_table` 新增 `expires_at`（int，可空）：待支付订单的支付截止时间，只有后台分配（`order/assign`）的订单有值；为空的待支付订单按 `created_at + 7200`（2 小时）取消（`OrderHandleJob`，契约见 `docs/traffic-cycle/DESIGN.md` §4.4）。未升级的后端没有这个字段。
   - 关联：`plan:{id,name}`、`user:{id,email}`、`invite_user:{id,email}|null`、`payment:{id,name,payment,enable}|null`。
 
 ### 3.3 表格列（`N6t`）
@@ -380,6 +381,8 @@
 | 9 | `created_at` | 创建时间 | `yyyy/MM/dd HH:mm:ss`，等宽 | 是 | — |
 
 全部列不可隐藏。移动端卡片：主字段 `trade_no`，网格 `plan.name,total_amount,status,created_at`。分页条显示（每页选项见 §0.6）。
+
+【新UI·本 fork】支付截止时间：待支付订单在“订单状态”下方加一行 `MM-DD HH:mm 前支付`（截止 = `expires_at ?? created_at + 7200`，超过后显示“已超时，等待系统取消”），悬停显示完整截止时间、剩余时间和规则（后台分配订单按分配时设的有效期 / 用户自己下的单 2 小时）；`expires_at` 有值的订单在“类型”列多一个“后台分配”标签。没有 `expires_at` 字段的旧后端按 2 小时显示，不显示标签。
 
 行操作（均**无确认弹窗**，点击即调用，结束后 refetch，成功不 toast，失败由拦截器 toast）：
 - 标记为已支付：`POST /order/paid {trade_no}`
@@ -413,6 +416,7 @@
   4. **佣金信息**（仅当 `commission_status !== undefined && commission_balance` 为真值时显示）：佣金状态徽标；佣金金额 `TS(commission_balance)`（橙）；实际佣金 `TS(actual_commission_balance)`（仅非空时）；若有邀请人：分隔线、邀请人（链接 `/user/manage?email=...`）、邀请人ID。
 - 响应 `data` 字段：订单全部列 + `user{id,email}`、`plan{id,name}`、`payment{id,name,payment,enable}|null`、`commission_log`（数组：`{id,invite_user_id,user_id,trade_no,order_amount(分),get_amount(分),created_at,updated_at}`）、`invite_user{id,email}|null`；若 `surplus_order_ids` 非空另有 `surplus_orders`（被折抵订单数组，完整订单列）；`period` 为旧格式。错误：400“订单不存在”。
 - 【建议】官方未展示但后端已返回、新 UI 可补充：支付方式 `payment.name`、手续费 `handling_amount`、支付时间 `paid_at`、优惠券 `coupon_id`、`surplus_credit`、`commission_log` 明细、`surplus_orders` 列表。
+- 【新UI·本 fork】待支付订单在“时间信息”里显示“支付截止”（完整时间 + 剩余时间或“已超时，等待系统取消”，下方注明是后台分配的有效期还是 2 小时规则）；`expires_at` 有值时标题标签区多一个“后台分配”。
 
 ### 3.6 订单分配弹窗（`f6t`）
 
@@ -429,6 +433,7 @@
 - 提交 `POST /order/assign {email, plan_id, period, total_amount}` → 响应 `data` 为新订单 `trade_no`（字符串）→ refetch、重置、关闭、toast“添加成功”。按钮“取消”/“确认”（通用提交文案）。
 - 【后端】逻辑：用户不存在 400“该用户不存在”；套餐不存在 400“该订阅不存在”；用户有待支付或开通中订单（status 0/1）→ 400“该用户还有待支付的订单，无法分配”。创建 **待支付(0)** 订单：`trade_no=Helper::guid()`，`period` 转新格式；类型判定：reset_price→流量重置(4)；用户已有其它套餐→升级(3)；同套餐且未过期→续费(2)；否则新购(1)；计算邀请佣金（`setInvite`）。**不校验该套餐是否有此周期价格、不扣余额、不应用折扣/折抵**。之后需管理员再“标记为已支付”才会开通。
 - 【风险】`100*parseFloat("1.1")` = `110.00000000000001`，后端只校验 required，存入 int 列由数据库截断/取整。【建议】新 UI 用 `Math.round(元*100)`，并前端校验 ≥0。
+- 【新UI·本 fork】支付有效期：表单末尾“支付有效期”下拉 `24 小时` / `48 小时` / `72 小时（默认）` / `7 天`，提交为 `expire_hours`（24/48/72/168），下方提示“用户需在 {现在 + 有效期} 前支付，超时订单自动取消（用户自己下的单为 2 小时）”，成功 toast“添加成功，已创建待支付订单，用户需在 {72 小时 / 7 天}内支付”（准确截止时间按服务器的 `created_at` 计算，见订单列表，本地时钟可能差几十秒）。后端（`docs/traffic-cycle/DESIGN.md` §4.4）：`expire_hours` 可选，1–720，默认 72，写 `expires_at = now + expire_hours×3600`；超时未支付由 `OrderHandleJob` 取消。提示文案同时说明“用户在有效期内支付后自动开通，也可在订单列表「标记为已支付」直接开通”。
 
 ### 3.7 接口明细
 
@@ -439,7 +444,7 @@
 | POST | `/order/paid` | `{trade_no}` | `true` | 只允许 status=0，否则 400“只能对待支付的订单进行操作”；`OrderService::paid('manual_operation')`：status→1、`paid_at=now`、`callback_no='manual_operation'`，同步执行 `OrderHandleJob` 开通（成功后 status→3）；失败 500“更新失败” |
 | POST | `/order/cancel` | `{trade_no}` | `true` | 只允许 status=0；status→2，若用了余额（`balance_amount`）则退回用户余额；失败 400“更新失败” |
 | POST | `/order/update` | `{trade_no, commission_status: 0\|1\|3}` | `true` | 只更新 `commission_status`；校验 `commission_status in:0,1,3`（“佣金状态格式不正确”）、`status in:0,1,2,3`（但 status 不会被写入）；订单不存在 400；500“更新失败” |
-| POST | `/order/assign` | 见 3.6 | `data`=trade_no | 见 3.6 |
+| POST | `/order/assign` | 见 3.6（本 fork 另有可选 `expire_hours`） | `data`=trade_no | 见 3.6；本 fork 写 `expires_at` |
 | GET | `/order/getOrder` | — | — | 实为 `StatController::getOrder`（仪表盘统计），不属于订单页 |
 
 佣金流转（`app/Console/Commands/CheckCommission.php`）：开启 `commission_auto_check_enable` 时，已完成且更新超过 3 天、佣金待确认(0) 的订单自动改为发放中(1)；定时任务对发放中(1) 的订单发放佣金并置为有效(2)。所以后台“发放中”=人工批准立即进入发放队列，“无效”=作废佣金。

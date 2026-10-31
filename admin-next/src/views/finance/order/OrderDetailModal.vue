@@ -16,7 +16,7 @@ import { PERIOD_BY_KEY, PERIOD_BY_LEGACY, type LegacyPeriod, type PlanPeriod } f
 import { formatMoney, formatTime } from '@/utils/format'
 import CopyText from '@/components/CopyText.vue'
 import { copyText } from '@/utils/clipboard'
-import { useOrderActions } from './useOrderActions'
+import { deadlineInfo, useOrderActions } from './useOrderActions'
 
 const props = defineProps<{ show: boolean; orderId: number | null }>()
 const emit = defineEmits<{ 'update:show': [boolean]; changed: [] }>()
@@ -59,6 +59,7 @@ const canHandleCommission = computed(
   () => !!order.value && order.value.commission_status === 0 && order.value.status === 3 && hasCommission.value,
 )
 const actionBusy = computed(() => !!order.value && busy.value === order.value.trade_no)
+const deadline = computed(() => (order.value ? deadlineInfo(order.value) : null))
 
 function legacyPeriodLabel(p: string | null | undefined): string {
   if (!p) return '-'
@@ -100,6 +101,7 @@ async function act(fn: () => Promise<boolean>) {
           <div class="head-tags">
             <n-tag v-if="status" :type="status.type" size="small" round :bordered="false">{{ status.label }}</n-tag>
             <n-tag v-if="type" size="small" round :bordered="false">{{ type.label }}</n-tag>
+            <n-tag v-if="deadline?.assigned" size="small" round title="管理员通过“添加订单 / 分配订单”创建">后台分配</n-tag>
           </div>
         </div>
 
@@ -187,6 +189,14 @@ async function act(fn: () => Promise<boolean>) {
             <h3 class="section-title">时间信息</h3>
             <div class="kv">
               <span class="k">创建时间</span><span class="v num">{{ formatTime(order.created_at) }}</span>
+            </div>
+            <div v-if="order.status === 0 && deadline" class="kv">
+              <span class="k">支付截止</span>
+              <span class="v num">
+                {{ formatTime(deadline.at) }}
+                <span class="deadline-left" :class="deadline.expired ? 'muted' : 'warning'">{{ deadline.expired ? '（已超时，等待系统取消）' : `（剩余 ${deadline.remain}）` }}</span>
+                <div class="sub-note">{{ deadline.assigned ? '后台分配订单，按分配时设置的支付有效期' : '用户自己下的订单，2 小时内未支付自动取消' }}</div>
+              </span>
             </div>
             <div class="kv">
               <span class="k">支付时间</span><span class="v num">{{ formatTime(order.paid_at) }}</span>
@@ -371,6 +381,14 @@ async function act(fn: () => Promise<boolean>) {
 .help {
   color: var(--text-muted);
   cursor: help;
+}
+.sub-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+/* "（剩余 6 天 23 小时）" wraps as one piece instead of breaking inside the phrase. */
+.deadline-left {
+  white-space: nowrap;
 }
 .link {
   display: inline-flex;

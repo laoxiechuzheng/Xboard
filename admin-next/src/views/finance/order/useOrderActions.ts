@@ -1,14 +1,28 @@
 // Confirmed order / commission actions shared by the order table and the detail modal.
 import { ref } from 'vue'
-import { cancelOrder, markOrderPaid, updateCommissionStatus, type Order } from '@/api/order'
+import {
+  cancelOrder,
+  isAssignedOrder,
+  markOrderPaid,
+  paymentDeadline,
+  updateCommissionStatus,
+  type Order,
+} from '@/api/order'
 import { confirm, message } from '@/utils/discrete'
-import { formatMoney } from '@/utils/format'
+import { formatMoney, formatRemaining, nowSeconds } from '@/utils/format'
 
 type OrderLike = Pick<Order, 'trade_no' | 'total_amount' | 'balance_amount' | 'commission_balance' | 'user' | 'plan' | 'invite_user'>
 
 export function shortTradeNo(tradeNo: string | null | undefined): string {
   const s = tradeNo || ''
   return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s
+}
+
+/** Payment deadline of a pending order (expires_at ?? created_at + 2h) with the time left. */
+export function deadlineInfo(o: Pick<Order, 'expires_at' | 'created_at'>, now = nowSeconds()) {
+  const at = paymentDeadline(o)
+  const left = at - now
+  return { at, expired: left <= 0, remain: left > 0 ? formatRemaining(left) : '', assigned: isAssignedOrder(o) }
 }
 
 function describe(o: OrderLike): string {

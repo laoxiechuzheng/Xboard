@@ -14,7 +14,7 @@ import { deviceMeta, deviceText } from '../login-log/meta'
 import { commissionTypeLabel, formatAnyTime, formatIp, money, truthy } from './helpers'
 
 const props = defineProps<{ show: boolean; user: UserRow | null }>()
-const emit = defineEmits<{ 'update:show': [boolean]; 'filter-email': [string] }>()
+const emit = defineEmits<{ 'update:show': [boolean]; 'filter-email': [string]; 'open-cycle': [UserRow] }>()
 const router = useRouter()
 
 // v2_user.last_login_ip is never written upstream; the latest successful login log replaces it.
@@ -117,7 +117,13 @@ function openInviter() {
       </section>
 
       <section class="group">
-        <h4>流量信息</h4>
+        <div class="group-head">
+          <h4>流量信息</h4>
+          <n-button text size="tiny" type="primary" icon-placement="right" @click="emit('open-cycle', user)">
+            流量周期
+            <template #icon><n-icon><arrow-forward-outline /></n-icon></template>
+          </n-button>
+        </div>
         <div class="kv"><span class="k">总流量</span><span class="v num">{{ user.transfer_enable ? formatBytes(user.transfer_enable) : '-' }}</span></div>
         <div class="kv"><span class="k">上传已用</span><span class="v num">{{ formatBytes(user.u) }}</span></div>
         <div class="kv"><span class="k">下载已用</span><span class="v num">{{ formatBytes(user.d) }}</span></div>

@@ -52,8 +52,9 @@ const pages: RouteRecordRaw[] = [
   {
     path: 'user/traffic-reset-logs',
     component: () => import('@/views/user/TrafficResetView.vue'),
-    meta: { title: '流量重置日志' },
+    meta: { title: '流量周期与重置' },
   },
+  { path: 'user/traffic-reset', redirect: (to) => ({ path: '/user/traffic-reset-logs', query: to.query }) },
   { path: 'user/login-log', component: () => import('@/views/user/LoginLogView.vue'), meta: { title: '登录记录' } },
 
   // Plugin pages declared via config.json admin_menus / admin_crud (spec platform §4).

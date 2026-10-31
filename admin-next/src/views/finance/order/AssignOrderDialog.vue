@@ -20,6 +20,7 @@ import {
 import { fetchPlans, planPrices, PLAN_PERIODS, PERIOD_BY_LEGACY, type Plan, type LegacyPeriod } from '@/api/plan'
 import { assignOrder } from '@/api/order'
 import { message } from '@/utils/discrete'
+import { formatTime, nowSeconds } from '@/utils/format'
 
 const props = defineProps<{ show: boolean; email?: string }>()
 const emit = defineEmits<{ 'update:show': [boolean]; success: [] }>()
@@ -37,7 +38,19 @@ const form = reactive({
   period: null as LegacyPeriod | null,
   /** yuan; converted to cents on submit */
   amount: 0 as number | null,
+  /** Payment window (order/assign expire_hours); users' own orders keep the 2-hour limit. */
+  expire_hours: 72,
 })
+
+// Admin-assigned orders usually wait for a reply in a ticket, so the default is 72 hours, not 2.
+const EXPIRE_OPTIONS = [
+  { label: '24 小时', value: 24 },
+  { label: '48 小时', value: 48 },
+  { label: '72 小时（默认）', value: 72 },
+  { label: '7 天', value: 168 },
+]
+const deadlineFor = (hours: number) => formatTime(nowSeconds() + hours * 3600, false)
+const expireLabel = (hours: number) => (hours % 24 === 0 && hours > 72 ? `${hours / 24} 天` : `${hours} 小时`)
 
 const selectedPlan = computed(() => plans.value.find((p) => p.id === form.plan_id) ?? null)
 const selectedPrices = computed(() => (selectedPlan.value ? planPrices(selectedPlan.value) : {}))
@@ -88,6 +101,7 @@ function reset() {
   form.plan_id = null
   form.period = null
   form.amount = 0
+  form.expire_hours = 72
   amountTouched.value = false
   formRef.value?.restoreValidation()
 }
@@ -146,8 +160,10 @@ async function submit() {
       plan_id: form.plan_id as number,
       period: form.period as LegacyPeriod,
       total_amount: Math.round(Number(form.amount) * 100),
+      expire_hours: form.expire_hours,
     })
-    message.success('添加成功，已创建待支付订单')
+    // The exact deadline is the server's created_at + window (see the order list), not the local clock.
+    message.success(`添加成功，已创建待支付订单，用户需在 ${expireLabel(form.expire_hours)}内支付`)
     emit('success')
     close()
   } catch {
@@ -170,7 +186,7 @@ async function submit() {
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <n-alert type="info" :show-icon="false" class="assign-tip">
-      为用户创建一笔<b>待支付</b>订单，金额由你指定，不校验套餐价格、不扣余额、不使用优惠券。需在订单列表点击「标记为已支付」后才会开通。
+      为用户创建一笔<b>待支付</b>订单，金额由你指定，不校验套餐价格、不扣余额、不使用优惠券。用户在有效期内支付后自动开通，也可在订单列表点击「标记为已支付」直接开通。
     </n-alert>
     <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" require-mark-placement="right-hanging">
       <n-form-item label="用户邮箱" path="email">
@@ -220,6 +236,12 @@ async function submit() {
             >
           </div>
           <div v-else-if="form.plan_id && form.period" class="field-hint">该套餐未设置此周期价格，请手动填写支付金额，订单将按填写的金额创建</div>
+        </div>
+      </n-form-item>
+      <n-form-item label="支付有效期" path="expire_hours">
+        <div class="amount-field">
+          <n-select v-model:value="form.expire_hours" :options="EXPIRE_OPTIONS" />
+          <div class="field-hint">用户需在 {{ deadlineFor(form.expire_hours) }} 前支付，超时订单自动取消（用户自己下的单为 2 小时）。</div>
         </div>
       </n-form-item>
     </n-form>

@@ -1,0 +1,1 @@
+import{r as e}from"./http-COBK_zX8.js";function t(t={}){return e.get(`/plan/fetch`,void 0,t)}function n(){return e.get(`/server/group/fetch`)}async function r(){return(await e.get(`/server/route/fetch`)).data??[]}function i(){return e.get(`/server/manage/getNodes`)}export{r as i,t as n,n as r,i as t};

@@ -32,6 +32,7 @@ import { usePagedTable } from '@/composables/usePagedTable'
 import {
   fetchOrders,
   findEnum,
+  isAssignedOrder,
   ORDER_STATUS,
   ORDER_TYPE,
   COMMISSION_STATUS,
@@ -44,7 +45,7 @@ import { PLAN_PERIODS, PERIOD_BY_KEY, PERIOD_BY_LEGACY, type LegacyPeriod, type 
 import { formatMoney, formatTime } from '@/utils/format'
 import AssignOrderDialog from './order/AssignOrderDialog.vue'
 import OrderDetailModal from './order/OrderDetailModal.vue'
-import { shortTradeNo, useOrderActions } from './order/useOrderActions'
+import { deadlineInfo, shortTradeNo, useOrderActions } from './order/useOrderActions'
 
 const route = useRoute()
 const router = useRouter()
@@ -333,6 +334,24 @@ function menuButton(options: DropdownOption[], o: Order, onSelect: (key: string,
   )
 }
 
+/** Second line of a pending order's status: when it is cancelled automatically. */
+function deadlineLine(o: Order) {
+  const d = deadlineInfo(o)
+  const how = d.assigned ? '后台分配订单，按分配时设置的支付有效期' : '用户自己下的订单，2 小时内未支付自动取消'
+  return h(NTooltip, null, {
+    trigger: () =>
+      h(
+        'div',
+        { class: ['deadline', { late: d.expired }] },
+        d.expired ? '已超时，等待系统取消' : `${formatTime(d.at, false).slice(5)} 前支付`,
+      ),
+    default: () => [
+      h('div', null, `支付截止：${formatTime(d.at)}${d.expired ? '' : `（剩余 ${d.remain}）`}`),
+      h('div', null, how),
+    ],
+  })
+}
+
 function helpTitle(title: string, tip: string) {
   return () =>
     h('span', { class: 'th-help' }, [
@@ -377,8 +396,14 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     key: 'type',
     title: '类型',
-    width: 92,
-    render: (o) => tag(findEnum(ORDER_TYPE, o.type), o.type),
+    width: 150,
+    render: (o) =>
+      h('div', { class: 'cell-tags' }, [
+        tag(findEnum(ORDER_TYPE, o.type), o.type),
+        isAssignedOrder(o)
+          ? h(NTag, { size: 'small', round: true, title: '管理员通过“添加订单 / 分配订单”创建' }, { default: () => '后台分配' })
+          : null,
+      ]),
   },
   {
     key: 'plan',
@@ -410,9 +435,12 @@ const columns = computed<DataTableColumns<Order>>(() => [
     sorter: true,
     sortOrder: sortOrderOf('status'),
     render: (o) =>
-      h('div', { class: 'cell-with-menu' }, [
-        tag(findEnum(ORDER_STATUS, o.status), o.status),
-        o.status === 0 ? menuButton(statusMenu, o, onStatusAction, '处理订单') : null,
+      h('div', null, [
+        h('div', { class: 'cell-with-menu' }, [
+          tag(findEnum(ORDER_STATUS, o.status), o.status),
+          o.status === 0 ? menuButton(statusMenu, o, onStatusAction, '处理订单') : null,
+        ]),
+        o.status === 0 ? deadlineLine(o) : null,
       ]),
   },
   {
@@ -525,7 +553,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
         :loading="table.loading.value"
         :pagination="table.pagination"
         :row-key="(o: Order) => o.id"
-        :scroll-x="1400"
+        :scroll-x="1460"
         :bordered="false"
         size="small"
         class="order-table"
@@ -591,6 +619,22 @@ const columns = computed<DataTableColumns<Order>>(() => [
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+.order-table :deep(.cell-tags) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.order-table :deep(.deadline) {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--warning-color);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+.order-table :deep(.deadline.late) {
+  color: var(--text-muted);
 }
 .order-table :deep(.th-help) {
   display: inline-flex;
