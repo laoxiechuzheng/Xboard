@@ -4,14 +4,17 @@ namespace App\Observers;
 
 use App\Jobs\NodeUserSyncJob;
 use App\Models\User;
+use App\Services\TrafficCycleService;
 use App\Services\TrafficResetService;
+use Illuminate\Support\Facades\Log;
 
 class UserObserver
 {
   public bool $afterCommit = true;
 
   public function __construct(
-    private readonly TrafficResetService $trafficResetService
+    private readonly TrafficResetService $trafficResetService,
+    private readonly TrafficCycleService $trafficCycleService
   ) {
   }
 
@@ -23,8 +26,8 @@ class UserObserver
     $needsSync = $user->wasChanged($syncFields);
     $oldGroupId = $user->wasChanged('group_id') ? $user->getOriginal('group_id') : null;
 
-    if ($user->wasChanged(['plan_id', 'expired_at'])) {
-      $this->recalculateNextResetAt($user);
+    if ($user->wasChanged(['plan_id', 'expired_at', 'transfer_enable'])) {
+      $this->syncTrafficCycle($user);
     }
 
     if ($needsSync) {
@@ -34,7 +37,7 @@ class UserObserver
 
   public function created(User $user): void
   {
-    $this->recalculateNextResetAt($user);
+    $this->syncTrafficCycle($user);
     NodeUserSyncJob::dispatch($user->id, 'created');
   }
 
@@ -46,7 +49,25 @@ class UserObserver
   }
 
   /**
-   * 根据当前用户状态重新计算 next_reset_at
+   * Paths that write v2_user directly (gift cards, trial, generate, plain saves) are reconciled here;
+   * orders and admin edits update the cycle explicitly and this is then a no-op.
+   */
+  private function syncTrafficCycle(User $user): void
+  {
+    if ($this->trafficCycleService->enabled()) {
+      try {
+        $this->trafficCycleService->reconcile($user);
+      } catch (\Throwable $e) {
+        Log::error('Traffic cycle reconcile failed', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+      }
+      return;
+    }
+
+    $this->recalculateNextResetAt($user);
+  }
+
+  /**
+   * 根据当前用户状态重新计算 next_reset_at（周期账本表不存在时）
    */
   private function recalculateNextResetAt(User $user): void
   {

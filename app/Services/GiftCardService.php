@@ -163,7 +163,9 @@ class GiftCardService
 
         if (isset($rewards['reset_package']) && $rewards['reset_package']) {
             if ($this->user->plan_id) {
-                app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_GIFT_CARD);
+                app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_GIFT_CARD, [
+                    'reason' => TrafficResetLog::REASON_GIFT_CARD_RESET,
+                ]);
             }
         }
 

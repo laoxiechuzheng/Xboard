@@ -2,17 +2,20 @@
 
 namespace App\Http\Controllers\V2\Admin;
 
+use App\Exceptions\ApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\UserGenerate;
 use App\Http\Requests\Admin\UserSendMail;
 use App\Http\Requests\Admin\UserUpdate;
 use App\Jobs\SendEmailJob;
 use App\Models\Plan;
+use App\Models\TrafficCycle;
 use App\Models\User;
 use App\Models\UserLoginLog;
 use App\Services\AuthService;
 use App\Services\NodeSyncService;
 use App\Services\Plugin\HookManager;
+use App\Services\TrafficCycleService;
 use App\Services\UserService;
 use App\Traits\QueryOperators;
 use App\Utils\Helper;
@@ -241,6 +244,15 @@ class UserController extends Controller
     public function update(UserUpdate $request)
     {
         $params = $request->validated();
+        // 流量周期选项（DESIGN §3.6），不传 = 旧行为
+        $cycleOptions = [
+            'cycle_mode' => $params['cycle_mode'] ?? null,
+            'cycle_quota_scope' => $params['cycle_quota_scope'] ?? null,
+            'cycle_ends_at' => $params['cycle_ends_at'] ?? null,
+            'cycle_note' => $params['cycle_note'] ?? null,
+            'cycle_note_set' => $request->exists('cycle_note'),
+        ];
+        unset($params['cycle_mode'], $params['cycle_quota_scope'], $params['cycle_ends_at'], $params['cycle_note']);
 
         $user = User::find($request->input('id'));
         if (!$user) {
@@ -293,7 +305,9 @@ class UserController extends Controller
         ]);
 
         try {
-            $user->update($params);
+            app(TrafficCycleService::class)->adminUpdate($user, $params, $cycleOptions, $request->user()?->id);
+        } catch (ApiException $e) {
+            return $this->fail([422, $e->getMessage()]);
         } catch (\Exception $e) {
             Log::error($e);
             return $this->fail([500, '保存失败']);
@@ -718,6 +732,8 @@ class UserController extends Controller
             $user->stat()->delete();
             $user->tickets()->delete();
             UserLoginLog::where('user_id', $user->id)->delete();
+            // MySQL 5.7 can reuse the highest user id after a restart; never leave an open cycle behind
+            TrafficCycle::where('user_id', $user->id)->delete();
             $user->delete();
             DB::commit();
 

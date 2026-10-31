@@ -20,6 +20,7 @@ use App\Http\Controllers\V2\Admin\KnowledgeController;
 use App\Http\Controllers\V2\Admin\PaymentController;
 use App\Http\Controllers\V2\Admin\SystemController;
 use App\Http\Controllers\V2\Admin\ThemeController;
+use App\Http\Controllers\V2\Admin\TrafficCycleController;
 use App\Http\Controllers\V2\Admin\TrafficResetController;
 use Illuminate\Contracts\Routing\Registrar;
 
@@ -138,6 +139,8 @@ class AdminRoute
                 $router->post('/setInviteUser', [UserController::class, 'setInviteUser']);
                 $router->post('/destroy', [UserController::class, 'destroy']);
                 $router->any('/loginLog/fetch', [UserLoginLogController::class, 'fetch']);
+                $router->get('/trafficCycle/fetch', [TrafficCycleController::class, 'fetch']);
+                $router->get('/trafficCycle/preview', [TrafficCycleController::class, 'preview']);
             });
 
             // Stat

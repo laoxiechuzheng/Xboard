@@ -13,13 +13,15 @@ use App\Services\Plugin\HookManager;
 use App\Services\TrafficResetService;
 use App\Models\TrafficResetLog;
 use App\Utils\Helper;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Hash;
 
 class UserService
 {
     /**
      * Get the remaining days until the next traffic reset for a user.
-     * This method reuses the TrafficResetService logic for consistency.
+     * With the traffic cycle ledger this is the end of the current cycle; null for the final cycle
+     * (its end is the expiry, not a reset).
      */
     public function getResetDay(User $user): ?int
     {
@@ -32,7 +34,7 @@ class UserService
         }
 
         // Calculate the remaining days from now to the next reset time
-        $now = time();
+        $now = Carbon::now()->getTimestamp();
         $resetTimestamp = $nextResetTime->timestamp;
 
         if ($resetTimestamp <= $now) {

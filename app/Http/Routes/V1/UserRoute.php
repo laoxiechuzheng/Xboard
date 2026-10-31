@@ -14,6 +14,7 @@ use App\Http\Controllers\V1\User\ServerController;
 use App\Http\Controllers\V1\User\StatController;
 use App\Http\Controllers\V1\User\TelegramController;
 use App\Http\Controllers\V1\User\TicketController;
+use App\Http\Controllers\V1\User\TrafficCycleController;
 use App\Http\Controllers\V1\User\UserController;
 use Illuminate\Contracts\Routing\Registrar;
 
@@ -39,6 +40,8 @@ class UserRoute
             $router->post('/removeActiveSession', [UserController::class, 'removeActiveSession']);
             // Login log
             $router->get('/loginLog/fetch', [LoginLogController::class, 'fetch']);
+            // Traffic cycle
+            $router->get('/trafficCycle/fetch', [TrafficCycleController::class, 'fetch']);
             // Order
             $router->post('/order/save', [OrderController::class, 'save']);
             $router->post('/order/checkout', [OrderController::class, 'checkout']);

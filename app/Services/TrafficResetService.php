@@ -18,6 +18,7 @@ class TrafficResetService
 {
   /**
    * Check if a user's traffic should be reset and perform the reset.
+   * With the traffic cycle ledger this rolls the user into the next cycle.
    */
   public function checkAndReset(User $user, string $triggerSource = TrafficResetLog::SOURCE_AUTO): bool
   {
@@ -25,45 +26,72 @@ class TrafficResetService
       return false;
     }
 
+    $cycles = app(TrafficCycleService::class);
+    if ($cycles->enabled()) {
+      return $cycles->rolloverVia($user, $triggerSource);
+    }
+
     return $this->performReset($user, $triggerSource);
   }
 
   /**
-   * Perform the traffic reset for a user.
+   * Clear the user's usage inside the current cycle.
+   *
+   * $context (reason, order_id, admin_id, cycle_id, note ...) becomes the log metadata (DESIGN §4.2).
+   * Nothing to clear means no log row and no reset_count increment.
    */
-  public function performReset(User $user, string $triggerSource = TrafficResetLog::SOURCE_MANUAL): bool
+  public function performReset(User $user, string $triggerSource = TrafficResetLog::SOURCE_MANUAL, array $context = []): bool
   {
+    if (!$user->exists) {
+      return false;
+    }
+
     try {
-      return DB::transaction(function () use ($user, $triggerSource) {
-        $oldUpload = $user->u ?? 0;
-        $oldDownload = $user->d ?? 0;
-        $oldTotal = $oldUpload + $oldDownload;
+      $log = DB::transaction(function () use ($user, $triggerSource, $context) {
+        $cycles = app(TrafficCycleService::class);
+        $cycles->lockUser($user);
+        $oldUpload = (int) ($user->u ?? 0);
+        $oldDownload = (int) ($user->d ?? 0);
 
         $nextResetTime = $this->calculateNextResetTime($user);
+        $user->next_reset_at = $nextResetTime ? $nextResetTime->timestamp : null;
 
-        $user->update([
-          'u' => 0,
-          'd' => 0,
-          'last_reset_at' => time(),
-          'reset_count' => $user->reset_count + 1,
-          'next_reset_at' => $nextResetTime ? $nextResetTime->timestamp : null,
-        ]);
+        if ($oldUpload === 0 && $oldDownload === 0) {
+          $user->save();
+          return null;
+        }
 
-        $this->recordResetLog($user, [
-          'reset_type' => $this->getResetTypeFromPlan($user->plan),
-          'trigger_source' => $triggerSource,
-          'old_upload' => $oldUpload,
-          'old_download' => $oldDownload,
-          'old_total' => $oldTotal,
-          'new_upload' => 0,
-          'new_download' => 0,
-          'new_total' => 0,
-        ]);
+        $user->u = 0;
+        $user->d = 0;
+        $user->last_reset_at = Carbon::now()->getTimestamp();
+        $user->reset_count = (int) $user->reset_count + 1;
+        $user->save();
 
-        $this->clearUserCache($user);
-        HookManager::call('traffic.reset.after', $user);
-        return true;
+        if ($context && !isset($context['cycle_id']) && ($cycle = $cycles->openCycle($user))) {
+          $context['cycle_id'] = $cycle->id;
+        }
+        $log = $this->writeLog($user, $triggerSource, $oldUpload, $oldDownload, $context ?: null);
+
+        // a clear that opens a cycle is already explained by the cycle itself
+        if ($context && empty($context['cycle_start'])) {
+          $cycles->noteUsageCleared(
+            $user,
+            (int) $log->id,
+            $oldUpload + $oldDownload,
+            $context['reason'] ?? null,
+            $this->eventSource($triggerSource),
+            $context['admin_id'] ?? null
+          );
+        }
+
+        return $log;
       });
+
+      $this->forgetUserCache($user);
+      if ($log) {
+        HookManager::call('traffic.reset.after', $user);
+      }
+      return true;
     } catch (\Exception $e) {
       Log::error(__('traffic_reset.reset_failed'), [
         'user_id' => $user->id,
@@ -78,9 +106,17 @@ class TrafficResetService
 
   /**
    * Calculate the next traffic reset time for a user.
+   * With the ledger it is the end of the current cycle, null for the final cycle.
    */
   public function calculateNextResetTime(User $user): ?Carbon
   {
+    $cycles = app(TrafficCycleService::class);
+    if ($cycles->enabled()) {
+      // read only: partial selects (user/getSubscribe) fall back to next_reset_at, which the ledger keeps in sync
+      $next = $cycles->nextResetAt($user);
+      return $next === null ? null : Carbon::createFromTimestamp($next, config('app.timezone'));
+    }
+
     if (
       !$user->plan
       || $user->plan->reset_traffic_method === Plan::RESET_TRAFFIC_NEVER
@@ -192,23 +228,45 @@ class TrafficResetService
 
 
   /**
-   * Record the traffic reset log.
+   * Record one traffic reset log row. $context null keeps the legacy shape (no metadata).
+   * $periodic false marks an edit that is not a periodic reset (reset_type manual).
    */
-  private function recordResetLog(User $user, array $data): void
-  {
-    TrafficResetLog::create([
+  public function writeLog(
+    User $user,
+    string $triggerSource,
+    int $oldUpload,
+    int $oldDownload,
+    ?array $context,
+    int $newUpload = 0,
+    int $newDownload = 0,
+    bool $periodic = true
+  ): TrafficResetLog {
+    return TrafficResetLog::create([
       'user_id' => $user->id,
-      'reset_type' => $data['reset_type'],
+      'reset_type' => $periodic ? $this->getResetTypeFromPlan(Plan::find($user->plan_id)) : TrafficResetLog::TYPE_MANUAL,
       'reset_time' => now(),
-      'old_upload' => $data['old_upload'],
-      'old_download' => $data['old_download'],
-      'old_total' => $data['old_total'],
-      'new_upload' => $data['new_upload'],
-      'new_download' => $data['new_download'],
-      'new_total' => $data['new_total'],
-      'trigger_source' => $data['trigger_source'],
-      'metadata' => $data['metadata'] ?? null,
+      'old_upload' => $oldUpload,
+      'old_download' => $oldDownload,
+      'old_total' => $oldUpload + $oldDownload,
+      'new_upload' => $newUpload,
+      'new_download' => $newDownload,
+      'new_total' => $newUpload + $newDownload,
+      'trigger_source' => $triggerSource,
+      'metadata' => $context === null ? null : TrafficResetLog::buildMetadata($context),
     ]);
+  }
+
+  /**
+   * Who a cycle usage_cleared event is attributed to (DESIGN §4.3 `by`).
+   */
+  private function eventSource(string $triggerSource): string
+  {
+    return match ($triggerSource) {
+      TrafficResetLog::SOURCE_ORDER => 'order',
+      TrafficResetLog::SOURCE_GIFT_CARD => 'gift_card',
+      TrafficResetLog::SOURCE_MANUAL, TrafficResetLog::SOURCE_API => 'admin',
+      default => 'system',
+    };
   }
 
   /**
@@ -239,7 +297,7 @@ class TrafficResetService
   /**
    * Clear user-related cache.
    */
-  private function clearUserCache(User $user): void
+  public function forgetUserCache(User $user): void
   {
     $cacheKeys = [
       "user_traffic_{$user->id}",
@@ -403,6 +461,7 @@ class TrafficResetService
 
   /**
    * Manually reset a user's traffic (Admin function).
+   * $metadata: admin_id, note (the admin's reason text; legacy callers pass it as `reason`).
    */
   public function manualReset(User $user, array $metadata = []): bool
   {
@@ -410,6 +469,10 @@ class TrafficResetService
       return false;
     }
 
-    return $this->performReset($user, TrafficResetLog::SOURCE_MANUAL);
+    return $this->performReset($user, TrafficResetLog::SOURCE_MANUAL, [
+      'reason' => TrafficResetLog::REASON_ADMIN_RESET,
+      'admin_id' => $metadata['admin_id'] ?? null,
+      'note' => $metadata['note'] ?? ($metadata['reason'] ?? null),
+    ]);
   }
 }

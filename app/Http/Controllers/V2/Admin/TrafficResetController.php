@@ -35,10 +35,22 @@ class TrafficResetController extends Controller
       'end_date' => 'nullable|date|after_or_equal:start_date',
       'per_page' => 'nullable|integer|min:1|max:10000',
       'page' => 'nullable|integer|min:1',
+      'hide_noise' => 'nullable|boolean',
+      'reason' => 'nullable|string|in:' . implode(',', TrafficResetLog::reasonCodes()),
     ]);
 
     $query = TrafficResetLog::with(['user:id,email'])
-      ->orderBy('reset_time', 'desc');
+      ->orderBy('reset_time', 'desc')
+      ->orderBy('id', 'desc');
+
+    // “清除 0 B”的旧冗余行（DESIGN §4.2）
+    if ($request->boolean('hide_noise')) {
+      $query->meaningful();
+    }
+
+    if ($request->filled('reason')) {
+      $query->reason($request->input('reason'));
+    }
 
     // 筛选条件
     if ($request->filled('user_id')) {
@@ -95,6 +107,7 @@ class TrafficResetController extends Controller
         'trigger_source_name' => $log->getSourceName(),
         'metadata' => $log->metadata,
         'created_at' => $log->created_at,
+        ...$log->cycleFields(),
       ];
     });
 
@@ -157,13 +170,11 @@ class TrafficResetController extends Controller
             ], 400);
         }
 
-    $metadata = [];
-    if ($request->filled('reason')) {
-      $metadata['reason'] = $request->reason;
-      $metadata['admin_id'] = auth()->user()?->id;
-    }
-
-    $success = $this->trafficResetService->manualReset($user, $metadata);
+    // the admin's free-text reason is stored as metadata.note; metadata.reason is admin_reset
+    $success = $this->trafficResetService->manualReset($user, [
+      'admin_id' => $request->user()?->id,
+      'note' => $request->filled('reason') ? (string) $request->input('reason') : null,
+    ]);
 
             if (!$success) {
             return response()->json([

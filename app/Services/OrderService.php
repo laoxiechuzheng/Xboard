@@ -6,6 +6,7 @@ use App\Exceptions\ApiException;
 use App\Jobs\OrderHandleJob;
 use App\Models\Order;
 use App\Models\Plan;
+use App\Models\TrafficCycle;
 use App\Models\TrafficResetLog;
 use App\Models\User;
 use App\Services\Plugin\HookManager;
@@ -114,7 +115,10 @@ class OrderService
 
             match ((string) $order->period) {
                 Plan::PERIOD_ONETIME => $this->buyByOneTime($plan),
-                Plan::PERIOD_RESET_TRAFFIC => app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER),
+                Plan::PERIOD_RESET_TRAFFIC => app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER, [
+                    'reason' => TrafficResetLog::REASON_RESET_PACKAGE,
+                    'order_id' => $order->id,
+                ]),
                 default => $this->buyByPeriod($order, $plan),
             };
 
@@ -259,7 +263,7 @@ class OrderService
             $orderAmountSum = $orders->sum(fn($item) => $item->total_amount + $item->balance_amount + $item->surplus_amount - $item->surplus_credit);
             $orderMonthSum = $orders->sum(fn($item) => self::STR_TO_TIME[PlanService::getPeriodKey($item->period)] ?? 0);
             $firstOrderAt = $orders->min('created_at');
-            $expiredAt = Carbon::createFromTimestamp($firstOrderAt)->addMonths($orderMonthSum);
+            $expiredAt = Carbon::createFromTimestamp($firstOrderAt, config('app.timezone'))->addMonths($orderMonthSum);
 
             $now = now();
             $totalSeconds = $expiredAt->timestamp - $firstOrderAt;
@@ -340,26 +344,49 @@ class OrderService
 
     private function buyByPeriod(Order $order, Plan $plan)
     {
+        $type = (int) $order->type;
+        $quota = $plan->transfer_enable * 1073741824;
+        $expiredBefore = $this->user->expired_at;
         // change plan process
-        if ((int) $order->type === Order::TYPE_UPGRADE) {
-            $this->user->expired_at = time();
+        if ($type === Order::TYPE_UPGRADE) {
+            $this->user->expired_at = Carbon::now()->getTimestamp();
         }
-        $this->user->transfer_enable = $plan->transfer_enable * 1073741824;
         // 从一次性转换到循环或者新购的时候，重置流量
-        if ($this->user->expired_at === NULL || $order->type === Order::TYPE_NEW_PURCHASE)
-            app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER);
+        $reset = $this->user->expired_at === NULL || $type === Order::TYPE_NEW_PURCHASE;
         $this->user->plan_id = $plan->id;
         $this->user->group_id = $plan->group_id;
         $this->user->expired_at = $this->getTime($order->period, $this->user->expired_at);
+
+        $cycles = app(TrafficCycleService::class);
+        if ($type === Order::TYPE_RENEWAL && !$reset) {
+            // 续费不重开周期；管理员设的特殊周期额度保留到本周期结束
+            $this->user->transfer_enable = $cycles->renewForOrder($this->user, $order, $quota, $expiredBefore);
+            return;
+        }
+
+        $this->user->transfer_enable = $quota;
+        $context = $cycles->openForOrder(
+            $this->user,
+            $order,
+            $type === Order::TYPE_UPGRADE ? TrafficCycle::REASON_UPGRADE : TrafficCycle::REASON_PURCHASE
+        );
+        if ($reset) {
+            app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER, $context + [
+                'reason' => TrafficResetLog::REASON_NEW_PURCHASE,
+            ]);
+        }
     }
 
     private function buyByOneTime(Plan $plan)
     {
-        app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER);
         $this->user->transfer_enable = $plan->transfer_enable * 1073741824;
         $this->user->plan_id = $plan->id;
         $this->user->group_id = $plan->group_id;
         $this->user->expired_at = NULL;
+        $context = app(TrafficCycleService::class)->openForOrder($this->user, $this->order, TrafficCycle::REASON_ONETIME);
+        app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER, $context + [
+            'reason' => TrafficResetLog::REASON_ONETIME_PURCHASE,
+        ]);
     }
 
     /**
@@ -371,12 +398,15 @@ class OrderService
      */
     private function getTime(string $periodKey, ?int $timestamp = null): int
     {
-        $timestamp = $timestamp < time() ? time() : $timestamp;
+        $now = Carbon::now()->getTimestamp();
+        $timestamp = $timestamp < $now ? $now : $timestamp;
         $periodKey = PlanService::getPeriodKey($periodKey);
 
         if (isset(self::STR_TO_TIME[$periodKey])) {
             $months = self::STR_TO_TIME[$periodKey];
-            return Carbon::createFromTimestamp($timestamp)->addMonths($months)->timestamp;
+            // Carbon 3 reads a bare timestamp as UTC: months must be added on the site's calendar,
+            // or an order placed before 08:00 Beijing time gets a day more or less
+            return Carbon::createFromTimestamp($timestamp, config('app.timezone'))->addMonths($months)->timestamp;
         }
 
         throw new ApiException('无效的套餐周期');
@@ -388,7 +418,14 @@ class OrderService
             case 0:
                 break;
             case 1:
-                app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER);
+                app(TrafficResetService::class)->performReset($this->user, TrafficResetLog::SOURCE_ORDER, [
+                    'reason' => match ((int) $this->order->type) {
+                        Order::TYPE_RENEWAL => TrafficResetLog::REASON_RENEWAL_RESET,
+                        Order::TYPE_UPGRADE => TrafficResetLog::REASON_PLAN_CHANGE,
+                        default => TrafficResetLog::REASON_NEW_PURCHASE,
+                    },
+                    'order_id' => $this->order->id,
+                ]);
                 break;
         }
     }

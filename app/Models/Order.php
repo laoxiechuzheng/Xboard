@@ -34,6 +34,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property int|null $commission_balance
  * @property int|null $discount_amount
  * @property int|null $paid_at
+ * @property int|null $expires_at 待支付截止时间（后台分配的订单）；null = created_at + 2 小时
  * @property string|null $callback_no
  *
  * @property-read Plan $plan

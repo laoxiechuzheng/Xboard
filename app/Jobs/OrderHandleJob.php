@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Order;
 use App\Services\OrderService;
+use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -42,9 +43,9 @@ class OrderHandleJob implements ShouldQueue
         if (!$order) return;
         $orderService = new OrderService($order);
         switch ($order->status) {
-            // cancel
+            // cancel: admin-assigned orders carry their own deadline, user orders keep 2 hours
             case Order::STATUS_PENDING:
-                if ($order->created_at <= (time() - 3600 * 2)) {
+                if (Carbon::now()->getTimestamp() >= ($order->expires_at ?? $order->created_at + 3600 * 2)) {
                     $orderService->cancel();
                 }
                 break;

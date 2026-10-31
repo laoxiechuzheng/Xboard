@@ -158,8 +158,8 @@ class User extends Authenticatable
      */
     public function isActive(): bool
     {
-        return !$this->banned && 
-               ($this->expired_at === null || $this->expired_at > time()) &&
+        return !$this->banned &&
+               ($this->expired_at === null || $this->expired_at > now()->getTimestamp()) &&
                $this->plan_id !== null;
     }
 
@@ -178,7 +178,7 @@ class User extends Authenticatable
     {
         return $this->isActive() &&
                $this->next_reset_at !== null &&
-               $this->next_reset_at <= time();
+               $this->next_reset_at <= now()->getTimestamp();
     }
 
     /**

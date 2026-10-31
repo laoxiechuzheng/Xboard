@@ -17,7 +17,8 @@ class OrderAssign extends FormRequest
             'plan_id' => 'required',
             'email' => 'required',
             'total_amount' => 'required',
-            'period' => 'required|in:month_price,quarter_price,half_year_price,year_price,two_year_price,three_year_price,onetime_price,reset_price'
+            'period' => 'required|in:month_price,quarter_price,half_year_price,year_price,two_year_price,three_year_price,onetime_price,reset_price',
+            'expire_hours' => 'nullable|integer|min:1|max:720'
         ];
     }
 
@@ -28,7 +29,10 @@ class OrderAssign extends FormRequest
             'email.required' => '邮箱不能为空',
             'total_amount.required' => '支付金额不能为空',
             'period.required' => '订阅周期不能为空',
-            'period.in' => '订阅周期格式有误'
+            'period.in' => '订阅周期格式有误',
+            'expire_hours.integer' => '支付有效期格式有误',
+            'expire_hours.min' => '支付有效期最少 1 小时',
+            'expire_hours.max' => '支付有效期最多 720 小时'
         ];
     }
 }

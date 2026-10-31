@@ -75,7 +75,8 @@ class LoginServiceTest extends TestCase
             'email' => $email,
             'password' => password_hash($password, PASSWORD_DEFAULT),
             'uuid' => Helper::guid(true),
-            'token' => Helper::guid(true),
+            // v2_user.token is varchar(32), the dashed form only fits SQLite
+            'token' => Helper::guid(),
             'created_at' => time(),
             'updated_at' => time(),
         ]);

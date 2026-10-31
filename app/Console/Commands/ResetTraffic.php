@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\User;
 use App\Models\TrafficResetLog;
+use App\Services\TrafficCycleService;
 use App\Services\TrafficResetService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -15,7 +16,8 @@ class ResetTraffic extends Command
   protected $description = '流量重置 - 处理所有需要重置的用户';
 
   public function __construct(
-    private readonly TrafficResetService $trafficResetService
+    private readonly TrafficResetService $trafficResetService,
+    private readonly TrafficCycleService $trafficCycleService
   ) {
     parent::__construct();
   }
@@ -31,6 +33,9 @@ class ResetTraffic extends Command
       $this->warn('🔧 修正模式 - 将重新计算next_reset_at为null的用户');
     } elseif ($force) {
       $this->warn('⚡ 强制模式 - 将重新计算所有用户的重置时间');
+    }
+    if (($fixNull || $force) && $this->trafficCycleService->enabled()) {
+      $this->line('流量周期账本：按当前周期同步 next_reset_at，没有周期的用户会建立周期；已排定的周期结束时间不变');
     }
 
     try {
@@ -169,12 +174,7 @@ class ResetTraffic extends Command
 
     foreach ($nullUsers as $user) {
       try {
-        $nextResetTime = $this->trafficResetService->calculateNextResetTime($user);
-        if ($nextResetTime) {
-          $user->next_reset_at = $nextResetTime->timestamp;
-          $user->save();
-          $fixedCount++;
-        }
+        $fixedCount += (int) $this->recalculate($user);
       } catch (\Exception $e) {
         $errors[] = [
           'user_id' => $user->id,
@@ -218,12 +218,7 @@ class ResetTraffic extends Command
 
     foreach ($allUsers as $user) {
       try {
-        $nextResetTime = $this->trafficResetService->calculateNextResetTime($user);
-        if ($nextResetTime) {
-          $user->next_reset_at = $nextResetTime->timestamp;
-          $user->save();
-          $fixedCount++;
-        }
+        $fixedCount += (int) $this->recalculate($user);
       } catch (\Exception $e) {
         $errors[] = [
           'user_id' => $user->id,
@@ -247,12 +242,33 @@ class ResetTraffic extends Command
 
 
 
+  /**
+   * Bring one user's next_reset_at in line. With the ledger the cycle decides (reconcile keeps the
+   * promised cycle end); counts as fixed when next_reset_at changed.
+   */
+  private function recalculate(User $user): bool
+  {
+    if ($this->trafficCycleService->enabled()) {
+      $before = $user->next_reset_at;
+      $this->trafficCycleService->reconcile($user);
+      return $user->next_reset_at !== $before;
+    }
+
+    $nextResetTime = $this->trafficResetService->calculateNextResetTime($user);
+    if (!$nextResetTime) {
+      return false;
+    }
+    $user->next_reset_at = $nextResetTime->timestamp;
+    $user->save();
+    return true;
+  }
+
   private function getResetQuery()
   {
-    return User::where('next_reset_at', '<=', time())
+    return User::where('next_reset_at', '<=', now()->getTimestamp())
       ->whereNotNull('next_reset_at')
       ->where(function ($query) {
-        $query->where('expired_at', '>', time())
+        $query->where('expired_at', '>', now()->getTimestamp())
           ->orWhereNull('expired_at');
       })
       ->where('banned', 0)
@@ -266,7 +282,7 @@ class ResetTraffic extends Command
     return User::whereNull('next_reset_at')
       ->whereNotNull('plan_id')
       ->where(function ($query) {
-        $query->where('expired_at', '>', time())
+        $query->where('expired_at', '>', now()->getTimestamp())
           ->orWhereNull('expired_at');
       })
       ->where('banned', 0)
@@ -278,7 +294,7 @@ class ResetTraffic extends Command
   {
     return User::whereNotNull('plan_id')
       ->where(function ($query) {
-        $query->where('expired_at', '>', time())
+        $query->where('expired_at', '>', now()->getTimestamp())
           ->orWhereNull('expired_at');
       })
       ->where('banned', 0)

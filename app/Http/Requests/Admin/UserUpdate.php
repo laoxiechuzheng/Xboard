@@ -33,7 +33,12 @@ class UserUpdate extends FormRequest
             'commission_balance' => 'numeric',
             'remarks' => 'nullable',
             'speed_limit' => 'nullable|integer',
-            'device_limit' => 'nullable|integer'
+            'device_limit' => 'nullable|integer',
+            // 流量周期（docs/traffic-cycle/DESIGN.md §3.6）
+            'cycle_mode' => 'nullable|in:keep,restart',
+            'cycle_quota_scope' => 'nullable|in:cycle,standing',
+            'cycle_ends_at' => 'nullable|integer|min:0',
+            'cycle_note' => 'nullable|string|max:120'
         ];
 
         return HookManager::filter('admin.user.update.rules', $rules, $this);
@@ -66,7 +71,12 @@ class UserUpdate extends FormRequest
             'commission_balance.integer' => '佣金格式不正确',
             'password.min' => '密码长度最小8位',
             'speed_limit.integer' => '限速格式不正确',
-            'device_limit.integer' => '设备数量格式不正确'
+            'device_limit.integer' => '设备数量格式不正确',
+            'cycle_mode.in' => '周期处理方式只能是 keep 或 restart',
+            'cycle_quota_scope.in' => '流量生效范围只能是 cycle 或 standing',
+            'cycle_ends_at.integer' => '周期结束时间格式不正确',
+            'cycle_ends_at.min' => '周期结束时间格式不正确',
+            'cycle_note.max' => '周期备注最多 120 个字'
         ];
 
         return HookManager::filter('admin.user.update.messages', $messages, $this);

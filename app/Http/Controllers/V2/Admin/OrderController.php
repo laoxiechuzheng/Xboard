@@ -12,6 +12,7 @@ use App\Services\OrderService;
 use App\Services\PlanService;
 use App\Services\UserService;
 use App\Utils\Helper;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Eloquent\Builder;
@@ -235,6 +236,8 @@ class OrderController extends Controller
             $order->period = PlanService::getPeriodKey((string) $period);
             $order->trade_no = Helper::guid();
             $order->total_amount = $request->input('total_amount');
+            // 后台分配的订单给用户更长的付款时间（OrderHandleJob 按 expires_at 取消）
+            $order->expires_at = Carbon::now()->getTimestamp() + (int) ($request->input('expire_hours') ?: 72) * 3600;
 
             if (PlanService::getPeriodKey((string) $order->period) === Plan::PERIOD_RESET_TRAFFIC) {
                 $order->type = Order::TYPE_RESET_TRAFFIC;

@@ -4,6 +4,7 @@ namespace App\Observers;
 
 use App\Models\Plan;
 use App\Models\User;
+use App\Services\TrafficCycleService;
 use App\Services\TrafficResetService;
 
 class PlanObserver
@@ -16,6 +17,7 @@ class PlanObserver
         if (!$plan->isDirty('reset_traffic_method')) {
             return;
         }
+        $cycles = app(TrafficCycleService::class);
         $trafficResetService = app(TrafficResetService::class);
         User::where('plan_id', $plan->id)
             ->where('banned', 0)
@@ -24,7 +26,11 @@ class PlanObserver
                     ->orWhereNull('expired_at');
             })
             ->lazyById(500)
-            ->each(function (User $user) use ($trafficResetService) {
+            ->each(function (User $user) use ($cycles, $trafficResetService) {
+                if ($cycles->enabled()) {
+                    $cycles->reschedule($user, 'method_changed');
+                    return;
+                }
                 $nextResetTime = $trafficResetService->calculateNextResetTime($user);
                 $user->update([
                     'next_reset_at' => $nextResetTime?->timestamp,
@@ -32,4 +38,3 @@ class PlanObserver
             });
     }
 }
-
