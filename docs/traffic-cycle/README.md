@@ -1,6 +1,8 @@
 # 流量周期账本 · 运维说明
 
-> 最近核实：2026-11-01。全部测试在 SQLite 和 MySQL 5.7.44（与生产相同的 `sql_mode`、`explicit_defaults_for_timestamp=1`、`+08:00` 时区）上通过；三站生产库的副本上演练过迁移、bootstrap（dry-run + apply）、JSONL 回填、定时滚动和全部活跃用户的时间线读取（§8）。生产上线记录见各站 `AGENTS.md`。
+> 最近核实：2026-11-01。全部测试在 SQLite 和 MySQL 5.7.44（与生产相同的 `sql_mode`、`explicit_defaults_for_timestamp=1`、`+08:00` 时区）上通过；三站生产库的副本上演练过迁移、bootstrap（dry-run + apply）、JSONL 回填、定时滚动和全部活跃用户的时间线读取（§8）。
+>
+> **已上线**：2026-11-01 04:48–05:12 三站（yzy → mg → 98k）上线 `aeca294`，Web 与 ai-ticket-worker 同一镜像，TrafficReset 1.2.0 / AiTicketReply 1.7.20 同时上线，bootstrap 结果与演练一致，周期不变量全为 0。GitHub Actions 在 fork 上被暂停，这次的镜像是在主机上按 CI 步骤构建的 `xboard-local:aeca294`（见 §3 第 2 步）。各站的部署脚本、备份、报告和回滚步骤在站点 `backups/2026-11-01-traffic-cycle/`，过程记录在站点 `AGENTS.md`。
 >
 > 规则和接口约定见 [DESIGN.md](DESIGN.md)（改接口先改它）。本文件只讲上线、核对、日常运维、回滚和已知问题。
 
@@ -39,8 +41,9 @@
 1. **准备**
    - 按站点现有策略备份数据库；另存一份 `v2_user` 的周期相关列（`id, plan_id, transfer_enable, u, d, expired_at, next_reset_at, last_reset_at, reset_count`），回滚 `next_reset_at` 用。
    - TrafficReset 插件和镜像一起换（插件目录是挂载的，换文件后随容器重建生效）：1.2.0 在旧核心上走 1.1.0 原逻辑，在新核心上改为调用 `advance()`；新核心在迁移完成前它什么都不做。**不要让 1.1.x 插件和新核心同时运行**（见 §7）。
+   - **插件文件只在面板容器和 worker 都停止时替换**（或同目录临时文件 + rename 原子替换）：`PluginManager::loadPlugin()` 发现已启用插件的 `Plugin.php` 不存在时会删除它的 `v2_plugins` 行（连同配置，AiTicketReply 的 Prompt 也在里面），而定时任务每 30 秒、Octane worker 每次重启都会加载插件。运行中只改了插件文件时，用 `php artisan octane:reload` 和 `php artisan horizon:terminate` 让常驻进程加载新代码（后者也会让 ai-ticket-worker 处理完当前任务后退出重启）。
    - AiTicketReply 的上下文在 `ai-ticket-worker` 容器里生成，worker 要和面板用同一个镜像，否则【流量周期】上下文为空。
-2. **部署镜像**。镜像入口会执行 `xboard:update`，其中包含 `migrate --force`；设置了 `SKIP_APP_UPDATE=true` 的站点手动执行 `php artisan migrate --force`。确认：
+2. **部署镜像**。正常用 CI（`docker-publish.yml`）发布的 digest。2026-11-01 GitHub 暂停了 fork 上的工作流（Actions 页面：“Workflows are not currently being run on this fork due to the scale of GitHub Actions usage”，需维护者在网页上重新启用），三站用的是主机上构建的 `xboard-local:aeca294`：以上一个 CI 镜像为底，只替换两个提交间变化的应用文件，再按 CI 的步骤离线执行 `composer install --no-dev`（不能用 `composer dump-autoload --no-dev`：`installed.json` 没有 `dev-package-names`，composer 会按依赖图把 laravel/reverb、react/* 当成开发依赖剔除）；只在 Dockerfile、`.docker/`、composer.json/lock 未变时可用。配方、文件清单和与 git 树逐字节比对的记录在各站 `backups/2026-11-01-traffic-cycle/image/`。镜像入口会执行 `xboard:update`，其中包含 `migrate --force`；设置了 `SKIP_APP_UPDATE=true` 的站点手动执行 `php artisan migrate --force`。确认：
    ```sh
    php artisan migrate:status | grep 2026_11_01
    ```
@@ -117,6 +120,7 @@ WHERE u.plan_id IS NOT NULL AND (u.expired_at IS NULL OR u.expired_at > UNIX_TIM
 - **按需建立的周期**：账本启用后，没有周期的用户在被订单、管理员修改、礼品卡、到点重置、时间线接口碰到时按需建立周期：`next_reset_at` < 到期时沿用它（与 bootstrap 相同），为空时按 `planEnd(now, 到期)` 排期（等同旧版观察者在改套餐/到期时的重算）。bootstrap 命令对后者按 DESIGN §10.2 视为最终周期并标 `unscheduled_periodic`。两者只在“周期性套餐、到期时间非空但 `next_reset_at` 为空”的用户上结果不同，2026-11-01 三站这类用户为 0（`next_reset_at` 为空的周期性套餐用户都是长期有效，两条规则都是不排期）。按需建立的周期不会再被 `--fix-short` 处理，上线时 migrate 后立刻 bootstrap。
 - **旧版 TrafficReset 插件（1.1.x）+ 新核心**：插件自己把 `u/d` 清零、改到期时间，再调用 `performReset`。新核心在已用量为 0 时不写日志，所以这次清零在重置记录里完全看不到（只在插件 JSONL 里），周期也不会重开；到期被提前到当前周期结束之前时，本周期直接变成最终周期。所以插件要和核心一起换到 1.2.0。
 - **插件扫描已用尽的用户**：TrafficReset 1.2.0 每分钟（插件的 `schedule()`，由面板容器的定时任务执行）调用 `exhaustedCandidates()` 换时。上线时三站这类用户为 0，不会出现一次性的大批换时。可在插件配置里关掉 `sweep_exhausted`（不配置时默认开）。
+- **节点对已用尽用户的残余上报**：节点只给“已用 < 额度”的用户下发，但已建立的连接还会每分钟上报几十 KB（上线时 yzy 有 1 人）。每次上报都会触发插件判断；被核心以资格原因拒绝（如 `final_cycle`）后，插件按“套餐 | 额度 | 到期 | next_reset_at”记住状态，一小时内状态不变就不再判断、不写 JSONL（xboard-site-plugins `f363aa9`），续费、管理员修改、周期滚动会立即重新判断。
 - **后台设置缓存固定用 redis store**（`App\Support\Setting`）：测试里改成 array store（`tests/TestCase.php`）；生产不受影响。
 - **MySQL 差异**（测试已覆盖）：JSON 对象的键会被重新排序；`reason` 为 JSON null 时读回字符串 `"null"`（所以不写这个键）；`explicit_defaults_for_timestamp` 关闭的库上第一个 TIMESTAMP 列遇到更新会自动变成当前时间（JSONL 回填显式保留 `reset_time`）。生产库是 MySQL 5.7.44、`explicit_defaults_for_timestamp=1`、会话时区 `+08:00`（跟随主机）。
 - **bootstrap 的耗时**：每个用户查一次订单、重置日志和后台审计日志（`request_data LIKE`，`action` 有索引）。用户多、审计日志大的站点 dry-run 可能要几分钟；审计日志只保留 3 个月（`reset:log`），足够覆盖一个周期。
