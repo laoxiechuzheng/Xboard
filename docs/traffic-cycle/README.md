@@ -2,7 +2,7 @@
 
 > 最近核实：2026-11-01。全部测试在 SQLite 和 MySQL 5.7.44（与生产相同的 `sql_mode`、`explicit_defaults_for_timestamp=1`、`+08:00` 时区）上通过；三站生产库的副本上演练过迁移、bootstrap（dry-run + apply）、JSONL 回填、定时滚动和全部活跃用户的时间线读取（§8）。
 >
-> **已上线**：2026-11-01 04:48–05:12 三站（yzy → mg → 98k）上线 `aeca294`，Web 与 ai-ticket-worker 同一镜像，TrafficReset 1.2.0 / AiTicketReply 1.7.20 同时上线，bootstrap 结果与演练一致，周期不变量全为 0。GitHub Actions 在 fork 上被暂停，这次的镜像是在主机上按 CI 步骤构建的 `xboard-local:aeca294`（见 §3 第 2 步）。各站的部署脚本、备份、报告和回滚步骤在站点 `backups/2026-11-01-traffic-cycle/`，过程记录在站点 `AGENTS.md`。
+> **已上线**：2026-11-01 04:48–05:12 三站（yzy → mg → 98k）上线 `aeca294`，Web 与 ai-ticket-worker 同一镜像，TrafficReset 1.2.0 / AiTicketReply 1.7.20 同时上线，bootstrap 结果与演练一致，周期不变量全为 0。当时 GitHub Actions 在 fork 上被暂停，先用在主机上按 CI 步骤构建的 `xboard-local:aeca294`（见 §3 第 2 步）。Actions 恢复后，同日 07:04–07:09 三站换成 CI 镜像 `ghcr.io/laoxiechuzheng/xboard@sha256:df5de2c6e749fef4f1b8d95b2d784cda41da957105f8c0ee967f251c31fb9d0c`（master `fdaffe2` = `aeca294` + 本文档）。换之前逐文件核对过它与主机镜像等价，记录在站点 `backups/2026-11-01-ci-image/`。各站的部署脚本、备份、报告和回滚步骤在站点 `backups/2026-11-01-traffic-cycle/`，过程记录在站点 `AGENTS.md`。上线后第一次真实的定时轮转：98k 日志 39462（2026-11-01 06:12:04），结果正确。
 >
 > 规则和接口约定见 [DESIGN.md](DESIGN.md)（改接口先改它）。本文件只讲上线、核对、日常运维、回滚和已知问题。
 
@@ -43,7 +43,7 @@
    - TrafficReset 插件和镜像一起换（插件目录是挂载的，换文件后随容器重建生效）：1.2.0 在旧核心上走 1.1.0 原逻辑，在新核心上改为调用 `advance()`；新核心在迁移完成前它什么都不做。**不要让 1.1.x 插件和新核心同时运行**（见 §7）。
    - **插件文件只在面板容器和 worker 都停止时替换**（或同目录临时文件 + rename 原子替换）：`PluginManager::loadPlugin()` 发现已启用插件的 `Plugin.php` 不存在时会删除它的 `v2_plugins` 行（连同配置，AiTicketReply 的 Prompt 也在里面），而定时任务每 30 秒、Octane worker 每次重启都会加载插件。运行中只改了插件文件时，用 `php artisan octane:reload` 和 `php artisan horizon:terminate` 让常驻进程加载新代码（后者也会让 ai-ticket-worker 处理完当前任务后退出重启）。
    - AiTicketReply 的上下文在 `ai-ticket-worker` 容器里生成，worker 要和面板用同一个镜像，否则【流量周期】上下文为空。
-2. **部署镜像**。正常用 CI（`docker-publish.yml`）发布的 digest。2026-11-01 GitHub 暂停了 fork 上的工作流（Actions 页面：“Workflows are not currently being run on this fork due to the scale of GitHub Actions usage”，需维护者在网页上重新启用），三站用的是主机上构建的 `xboard-local:aeca294`：以上一个 CI 镜像为底，只替换两个提交间变化的应用文件，再按 CI 的步骤离线执行 `composer install --no-dev`（不能用 `composer dump-autoload --no-dev`：`installed.json` 没有 `dev-package-names`，composer 会按依赖图把 laravel/reverb、react/* 当成开发依赖剔除）；只在 Dockerfile、`.docker/`、composer.json/lock 未变时可用。配方、文件清单和与 git 树逐字节比对的记录在各站 `backups/2026-11-01-traffic-cycle/image/`。镜像入口会执行 `xboard:update`，其中包含 `migrate --force`；设置了 `SKIP_APP_UPDATE=true` 的站点手动执行 `php artisan migrate --force`。确认：
+2. **部署镜像**。正常用 CI（`docker-publish.yml`）发布的 digest。2026-11-01 GitHub 一度暂停了 fork 上的工作流（Actions 页面：“Workflows are not currently being run on this fork due to the scale of GitHub Actions usage”，需维护者在网页上重新启用）。期间三站先用主机上构建的 `xboard-local:aeca294`，Actions 恢复后同日换回 CI digest。换镜像前用 `compare-images.sh` 核对等价，要求 /www 内容、权限和软链接相同，运行时（php 二进制、扩展 .so、Alpine 包）与上一个 CI 镜像逐字节相同；换镜像用 `ci-swap.sh`，换前对旧容器、换后对新容器跑同一套健康门禁和账本门禁。两个脚本都在站点 `backups/2026-11-01-ci-image/`。主机构建的做法如下，以后再遇到 Actions 暂停时可以照用：以上一个 CI 镜像为底，只替换两个提交间变化的应用文件，再按 CI 的步骤离线执行 `composer install --no-dev`（不能用 `composer dump-autoload --no-dev`：`installed.json` 没有 `dev-package-names`，composer 会按依赖图把 laravel/reverb、react/* 当成开发依赖剔除）；只在 Dockerfile、`.docker/`、composer.json/lock 未变时可用。配方、文件清单和与 git 树逐字节比对的记录在各站 `backups/2026-11-01-traffic-cycle/image/`。镜像入口会执行 `xboard:update`，其中包含 `migrate --force`；设置了 `SKIP_APP_UPDATE=true` 的站点手动执行 `php artisan migrate --force`。确认：
    ```sh
    php artisan migrate:status | grep 2026_11_01
    ```
