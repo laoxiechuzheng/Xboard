@@ -131,4 +131,4 @@ WHERE u.plan_id IS NOT NULL AND (u.expired_at IS NULL OR u.expired_at > UNIX_TIM
 - 2026-11-01 结果：82 个测试在 SQLite 和 MySQL 5.7.44 上都通过（含原有 31 个），其中账本相关 51 个：`planEnd` 单元测试、工单 #6982 场景、定时滚动与补跑、订单（新购/续费/换套餐/一次性/重置包、按站点时区加月份）、管理员修改与预览（含“重开 + 已用填 0”）、时间线与插件钩子、换时防护（过时触发、0 B 换时留痕、扫描名单）、bootstrap 命令（含 JSONL 导入、1.1.x 换时作为周期起点）。
 - MySQL 上跑：把 `phpunit.xml` 的 `DB_CONNECTION/DB_DATABASE` 换成指向一个**一次性**库的 mysql 连接（`RefreshDatabase` 会清空它）。
 - 生产库副本演练（2026-11-01，三站）：`mysqldump --single-transaction` 只读导出（不含统计、邮件、工单消息等大表的数据）直接导入一次性 MySQL，跑 migrate → bootstrap dry-run → `--apply --fix-short --import-jsonl` → `reset:traffic` → 全部活跃用户读一次时间线。结果：yzy 1391 / mg 2588 / 98k 3819 个活跃用户各建立一个周期，`v2_user` 只有 `next_reset_at` 变化（全部是最终周期置空），各项核对为 0，JSONL 换时事件 140 / 265 / 314 条全部回填且 `reset_time` 未变，时间线读取 0 错误，扫描名单为空。
-- 一次性测试实例（长期运行的 Web 容器、种子数据、冒烟脚本）的说明在测试服务器的 `/www/wwwroot/xboard-cycle-test/README.txt`，不在仓库里。
+- 一次性测试实例（长期运行的 Web 容器、种子数据、冒烟脚本）和生产库副本演练环境在 2026-11-01 上线后已从测试服务器删除；脚本主副本在管理机 `work/xboard-cycle-test/`（`server/README.txt` 说明重建方法，`server/rehearsal/` 是演练脚本，`server/release-20261101/` 是这次的逐站部署脚本和 Actions 暂停时的镜像构建配方），不在仓库里。
