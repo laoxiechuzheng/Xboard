@@ -19,7 +19,7 @@ class TimelineTest extends TrafficCycleTestCase
     ];
 
     private const EVENT_KEYS = [
-        'id', 'at', 'reason', 'legacy', 'trigger_source', 'cleared', 'cleared_upload', 'cleared_download',
+        'id', 'at', 'reason', 'legacy', 'trigger_source', 'cleared', 'cleared_upload', 'cleared_download', 'carried',
         'quota_before', 'quota_after', 'expired_before', 'expired_after', 'shift_seconds', 'cycle_id', 'order_id', 'note',
     ];
 

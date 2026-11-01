@@ -9,6 +9,7 @@ import { fetchUserResetHistory, resetUserTraffic, type UserResetHistory } from '
 import { formatBytes, formatTime } from '@/utils/format'
 import { message } from '@/utils/discrete'
 import { normalizeResetLog } from '../traffic-reset/normalize'
+import { carriedText } from '../traffic-cycle/meta'
 import ResetReasonCell from '../traffic-reset/ResetReasonCell.vue'
 import { truthy } from './helpers'
 
@@ -185,6 +186,7 @@ const summary = computed(() => history.value?.user)
                     <div class="record-meta">
                       <span><span class="muted">重置时间</span> <span class="num">{{ formatTime(item.at) }}</span></span>
                       <span><span class="muted">清除流量</span> <span class="num" :class="item.cleared ? 'danger' : 'muted'">{{ formatBytes(item.cleared) }}</span></span>
+                      <span v-if="item.carried > 0" class="muted num">{{ carriedText(item.carried) }}</span>
                       <span class="muted num">#{{ item.id }}</span>
                     </div>
                     <div v-if="item.note" class="record-reason muted">备注：{{ item.note }}</div>

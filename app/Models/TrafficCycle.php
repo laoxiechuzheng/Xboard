@@ -84,15 +84,51 @@ class TrafficCycle extends Model
     }
 
     /**
-     * Append a lifecycle event (DESIGN §4.3), keeping only the newest MAX_EVENTS.
+     * Append a lifecycle event (DESIGN §4.3), keeping at most MAX_EVENTS.
+     * The newest event that carries the expiry (TrafficCycleService::knownExpiry reads it) is never
+     * trimmed: without it the ledger would fall back to the expiry at cycle start and treat the
+     * subscription as changed or lapsed. The oldest other events go first.
      */
     public function pushEvent(array $event): void
     {
-        $events = $this->events ?? [];
+        $events = array_values($this->events ?? []);
         $events[] = $event;
-        if (count($events) > self::MAX_EVENTS) {
-            $events = array_slice($events, -self::MAX_EVENTS);
+        $drop = count($events) - self::MAX_EVENTS;
+        if ($drop > 0) {
+            $keep = null;
+            for ($i = count($events) - 1; $i >= 0; $i--) {
+                if (is_array($events[$i]) && self::expiryOf($events[$i]) !== false) {
+                    $keep = $i;
+                    break;
+                }
+            }
+            $kept = [];
+            foreach ($events as $i => $item) {
+                if ($drop > 0 && $i !== $keep) {
+                    $drop--;
+                    continue;
+                }
+                $kept[] = $item;
+            }
+            $events = $kept;
         }
-        $this->events = array_values($events);
+        $this->events = $events;
+    }
+
+    /**
+     * The subscription expiry an event records (renewal: expired_after, expiry_changed: after; null =
+     * 长期有效), or false when the event does not carry one.
+     */
+    public static function expiryOf(array $event): int|null|false
+    {
+        $type = $event['type'] ?? null;
+        if ($type === 'renewal' && array_key_exists('expired_after', $event)) {
+            $value = $event['expired_after'];
+        } elseif ($type === 'expiry_changed' && array_key_exists('after', $event)) {
+            $value = $event['after'];
+        } else {
+            return false;
+        }
+        return $value === null || $value === '' ? null : (int) $value;
     }
 }

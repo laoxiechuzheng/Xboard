@@ -58,19 +58,30 @@ class AdvanceGuardTest extends TrafficCycleTestCase
         $this->assertTrue($third['ok']);
     }
 
-    public function test_an_advance_is_logged_even_when_nothing_was_used(): void
+    public function test_advance_needs_the_user_to_be_exhausted_under_the_lock(): void
     {
         $user = $this->subscriber(Plan::PERIOD_QUARTERLY, 0);
         $this->at('2026-09-25 10:00:00');
-        // a caller that does not pass pending_bytes vouches for the exhaustion itself
+        $expiry = (int) $user->expired_at;
+        // no pending_bytes: the stored usage alone decides
+        $result = $this->cycles()->advance($user, ['source' => 'test'], 30);
+        $this->assertFalse($result['ok']);
+        $this->assertSame('not_exhausted', $result['reason']);
+        $this->assertSame($result['before'], $result['after']);
+        $this->assertSame($expiry, (int) $user->refresh()->expired_at);
+        $this->assertSame([], $this->logsOf($user));
+        $this->assertCount(1, $this->cyclesOf($user));
+
+        // exactly at the quota it advances, and the advance is always logged with the expiry change
+        $this->useTraffic($user, 0, 100 * self::GB);
         $result = $this->cycles()->advance($user, ['source' => 'test'], 30);
         $this->assertTrue($result['ok']);
-
         $log = TrafficResetLog::find($result['reset_log_id']);
-        $this->assertNotNull($log);
-        $this->assertSame(0, (int) $log->old_total);
+        $this->assertSame(100 * self::GB, (int) $log->old_total);
+        $this->assertSame(0, (int) $log->new_total);
         $this->assertSame(TrafficResetLog::REASON_AUTO_ADVANCE, $log->metadata['reason']);
         $this->assertSame($result['shift_seconds'], $log->metadata['shift_seconds']);
+        $this->assertSame(0, $log->metadata['carried']);
         $this->assertFalse($log->isNoise());
         // the expiry moved, so the user sees the row
         $this->assertSame('auto_advance', $this->cycles()->timeline($user->refresh())['events'][0]['reason']);
@@ -89,10 +100,19 @@ class AdvanceGuardTest extends TrafficCycleTestCase
         $this->assertSame('2026-10-25 10:00:00', $this->date($this->currentCycle($final)->ends_at));
         $this->at('2026-09-25 10:00:00');
 
-        $ids = fn(int $days) => $this->cycles()->exhaustedCandidates($days)->pluck('id')->all();
+        $ids = fn(int $days, ?int $afterId = null) => $this->cycles()->exhaustedCandidates($days, 200, null, $afterId)->pluck('id')->all();
         $this->assertSame([$eligible->id], $ids(30));
         // 81 days left
         $this->assertSame([], $ids(90));
+
+        // keyset paging by user id (the plugin's sweep keeps a cursor so blocked users cannot starve later ones)
+        $later = $this->subscriber();
+        $this->at('2026-09-25 10:00:00');
+        $this->assertSame([$eligible->id, $later->id], $ids(30));
+        $this->assertSame([$eligible->id], $this->cycles()->exhaustedCandidates(30, 1)->pluck('id')->all());
+        $this->assertSame([$later->id], $ids(30, $eligible->id));
+        $this->assertSame([], $ids(30, $later->id));
+        $this->cycles()->advance($later, ['source' => 'sweep'], 30);
 
         $this->cycles()->advance($eligible, ['source' => 'sweep', 'pending_bytes' => 0], 30);
         $this->assertSame([], $ids(30));

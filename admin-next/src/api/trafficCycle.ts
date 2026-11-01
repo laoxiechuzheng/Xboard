@@ -94,6 +94,8 @@ export interface CycleResetEvent {
   cleared: number
   cleared_upload?: number | null
   cleared_download?: number | null
+  /** 换时: usage over the quota carried into the new cycle; 0 / absent for every other row. */
+  carried?: number | null
   quota_before?: number | null
   quota_after?: number | null
   expired_before?: number | null

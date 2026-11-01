@@ -4,6 +4,8 @@
 >
 > **已上线**：2026-11-01 04:48–05:12 三站（yzy → mg → 98k）上线 `aeca294`，Web 与 ai-ticket-worker 同一镜像，TrafficReset 1.2.0 / AiTicketReply 1.7.20 同时上线，bootstrap 结果与演练一致，周期不变量全为 0。当时 GitHub Actions 在 fork 上被暂停，先用在主机上按 CI 步骤构建的 `xboard-local:aeca294`（见 §3 第 2 步）。Actions 恢复后，同日 07:04–07:09 三站换成 CI 镜像 `ghcr.io/laoxiechuzheng/xboard@sha256:df5de2c6e749fef4f1b8d95b2d784cda41da957105f8c0ee967f251c31fb9d0c`（master `fdaffe2` = `aeca294` + 本文档）。换之前逐文件核对过它与主机镜像等价，记录在站点 `backups/2026-11-01-ci-image/`。各站的部署脚本、备份、报告和回滚步骤在站点 `backups/2026-11-01-traffic-cycle/`，过程记录在站点 `AGENTS.md`。上线后第一次真实的定时轮转：98k 日志 39462（2026-11-01 06:12:04），结果正确。
 >
+> **未部署的修改**（仓库里已有，生产仍是上面的版本）：换时结算（旧周期正好扣满额度，超出部分 `carried` 计入新周期，`advance()` 总在锁内复核是否用尽）、`TrafficFetchJob` 记账后的 `traffic.process.after` 钩子、不重置套餐的最终周期随到期延长、周期事件裁剪时保留到期事件、扫描名单分页 `afterId`、后台用户重置历史带账本字段（DESIGN §3.3、§3.7、§4.3、§6、§7.2）。要与 TrafficReset 1.2.1 / AiTicketReply 1.7.21 一起上线；新增和改动的测试尚未运行（本机没有 PHP）。
+>
 > 规则和接口约定见 [DESIGN.md](DESIGN.md)（改接口先改它）。本文件只讲上线、核对、日常运维、回滚和已知问题。
 
 ## 1. 它做什么
@@ -12,7 +14,7 @@
 
 - 月末购买不会再出现“一天后就重置”；
 - 管理员给的“仅本周期”额度（特殊周期）续费时不会被套餐流量覆盖，下周期自动恢复；
-- 换时（TrafficReset 插件）只把到期时间前移本周期没用完的时长，新周期额度恢复常备额度；
+- 换时（TrafficReset 插件）只把到期时间前移本周期没用完的时长，新周期额度恢复常备额度；旧周期正好扣满额度，超出的用量计入新周期（未部署，见上）；
 - 重置记录带原因（`metadata.reason`），清零 0 B 的情况不再写日志，旧的 0 B 行标为噪声。
 
 `v2_user.next_reset_at` 继续存在，始终等于当前周期的结束时间（最终周期为 null），定时任务 `reset:traffic` 仍按它选人，所以旧主题和旧接口照常工作。
@@ -28,7 +30,7 @@
 | 命令 | `traffic:cycle-bootstrap`（上线用，§3）；`reset:traffic --fix-null / --force` 有账本时改为同步周期 |
 | 用户接口 | `GET /api/v1/user/trafficCycle/fetch` |
 | 后台接口 | `GET user/trafficCycle/fetch`、`GET user/trafficCycle/preview`、`traffic-reset/logs` 新增 `hide_noise` / `reason` 和新字段、`user/update` 新增 `cycle_*` 参数、`order/assign` 新增 `expire_hours`（DESIGN §7.2） |
-| 插件钩子 | `HookManager::filter('traffic_cycle.advance_policy', null, $user)`，TrafficReset 1.2.0 注册 |
+| 插件钩子 | `HookManager::filter('traffic_cycle.advance_policy', null, $user)`，TrafficReset 1.2.0 注册；`HookManager::call('traffic.process.after', [$server, $protocol, $data])`，`TrafficFetchJob` 记账后调用（未部署），TrafficReset 1.2.1 监听 |
 | 设置 | `traffic_cycle_min_days`（最短周期天数，默认 15，没有后台界面） |
 | 测试 | `phpunit.xml`、`tests/TestCase.php`、`tests/Unit/Services/TrafficCyclePlanEndTest.php`、`tests/Feature/TrafficCycle/*` |
 
@@ -119,7 +121,10 @@ WHERE u.plan_id IS NOT NULL AND (u.expired_at IS NULL OR u.expired_at > UNIX_TIM
 
 - **按需建立的周期**：账本启用后，没有周期的用户在被订单、管理员修改、礼品卡、到点重置、时间线接口碰到时按需建立周期：`next_reset_at` < 到期时沿用它（与 bootstrap 相同），为空时按 `planEnd(now, 到期)` 排期（等同旧版观察者在改套餐/到期时的重算）。bootstrap 命令对后者按 DESIGN §10.2 视为最终周期并标 `unscheduled_periodic`。两者只在“周期性套餐、到期时间非空但 `next_reset_at` 为空”的用户上结果不同，2026-11-01 三站这类用户为 0（`next_reset_at` 为空的周期性套餐用户都是长期有效，两条规则都是不排期）。按需建立的周期不会再被 `--fix-short` 处理，上线时 migrate 后立刻 bootstrap。
 - **旧版 TrafficReset 插件（1.1.x）+ 新核心**：插件自己把 `u/d` 清零、改到期时间，再调用 `performReset`。新核心在已用量为 0 时不写日志，所以这次清零在重置记录里完全看不到（只在插件 JSONL 里），周期也不会重开；到期被提前到当前周期结束之前时，本周期直接变成最终周期。所以插件要和核心一起换到 1.2.0。
-- **插件扫描已用尽的用户**：TrafficReset 1.2.0 每分钟（插件的 `schedule()`，由面板容器的定时任务执行）调用 `exhaustedCandidates()` 换时。上线时三站这类用户为 0，不会出现一次性的大批换时。可在插件配置里关掉 `sweep_exhausted`（不配置时默认开）。
+- **TrafficReset 1.2.0 / 1.2.1 与核心的组合**：1.2.0 + 新核心与原来一样（在上报记账前换时，本次上报整笔记到新周期，旧额度内的部分多算一次）；1.2.1 + 2026-11-01 核心（没有 `traffic.process.after`）由每分钟扫描换时，最多晚一分钟，旧核心换时直接清零（超出部分不计入新周期）。只有 1.2.1 + 新核心按 DESIGN §3.7 精确结算，两者一起上线。
+- **插件扫描已用尽的用户**：TrafficReset 1.2.0 每分钟（插件的 `schedule()`，由面板容器的定时任务执行）调用 `exhaustedCandidates()` 换时。上线时三站这类用户为 0，不会出现一次性的大批换时。可在插件配置里关掉 `sweep_exhausted`（不配置时默认开）。1.2.1 按用户 ID 分页（每次 100 人，游标存在缓存键 `plugin:traffic_reset:user:sweep_cursor`），只对换时失败的用户跳过一小时。
+- **换时次数不设上限**：每次换时都按 DESIGN §3.7 结算；一次上报超出新额度时会连续换时（下一次记账或扫描），那是真实用量。
+- **上报钩子的耗时**：`traffic.process.after` 在 `TrafficFetchJob`（`timeout = 20` 秒，每批最多 1000 个用户）里同步执行，插件先用一条查询筛出本批已用尽的用户，通常只有零星几人要换时。任务超时被杀时已记的流量不受影响（每个用户一条独立的自增语句），没换成的由扫描在一分钟内补上。
 - **节点对已用尽用户的残余上报**：节点只给“已用 < 额度”的用户下发，但已建立的连接还会每分钟上报几十 KB（上线时 yzy 有 1 人）。每次上报都会触发插件判断；被核心以资格原因拒绝（如 `final_cycle`）后，插件按“套餐 | 额度 | 到期 | next_reset_at”记住状态，一小时内状态不变就不再判断、不写 JSONL（xboard-site-plugins `f363aa9`），续费、管理员修改、周期滚动会立即重新判断。
 - **后台设置缓存固定用 redis store**（`App\Support\Setting`）：测试里改成 array store（`tests/TestCase.php`）；生产不受影响。
 - **MySQL 差异**（测试已覆盖）：JSON 对象的键会被重新排序；`reason` 为 JSON null 时读回字符串 `"null"`（所以不写这个键）；`explicit_defaults_for_timestamp` 关闭的库上第一个 TIMESTAMP 列遇到更新会自动变成当前时间（JSONL 回填显式保留 `reset_time`）。生产库是 MySQL 5.7.44、`explicit_defaults_for_timestamp=1`、会话时区 `+08:00`（跟随主机）。
@@ -129,6 +134,7 @@ WHERE u.plan_id IS NOT NULL AND (u.expired_at IS NULL OR u.expired_at > UNIX_TIM
 
 - 单元 + 功能测试：`vendor/bin/phpunit`（需要 composer dev 依赖）。`phpunit.xml` 用 SQLite 内存库、array 缓存、sync 队列，`tests/TestCase.php` 强制这些设置，不会碰 `.env` 里的数据库或 redis。
 - 2026-11-01 结果：82 个测试在 SQLite 和 MySQL 5.7.44 上都通过（含原有 31 个），其中账本相关 51 个：`planEnd` 单元测试、工单 #6982 场景、定时滚动与补跑、订单（新购/续费/换套餐/一次性/重置包、按站点时区加月份）、管理员修改与预览（含“重开 + 已用填 0”）、时间线与插件钩子、换时防护（过时触发、0 B 换时留痕、扫描名单）、bootstrap 命令（含 JSONL 导入、1.1.x 换时作为周期起点）。
+- 未部署修改新增 / 改动的测试（尚未运行）：`AdvanceAccountingTest`（结算：超出部分计入新周期、正好用满不带入、超出新额度时再次换时且总量守恒、节点倍率与监听器异常、只有换时行有 `carried`、后台用户重置历史）、`ExpiryFollowTest`（不重置套餐的续费 / 管理员延长 / 改为长期 / 直接写库、按月套餐的原规则、事件裁剪保留到期事件）、`AdvanceGuardTest`（未用尽不传 `pending_bytes` 返回 `not_exhausted`、`exhaustedCandidates` 的 `afterId` 分页）。
 - MySQL 上跑：把 `phpunit.xml` 的 `DB_CONNECTION/DB_DATABASE` 换成指向一个**一次性**库的 mysql 连接（`RefreshDatabase` 会清空它）。
 - 生产库副本演练（2026-11-01，三站）：`mysqldump --single-transaction` 只读导出（不含统计、邮件、工单消息等大表的数据）直接导入一次性 MySQL，跑 migrate → bootstrap dry-run → `--apply --fix-short --import-jsonl` → `reset:traffic` → 全部活跃用户读一次时间线。结果：yzy 1391 / mg 2588 / 98k 3819 个活跃用户各建立一个周期，`v2_user` 只有 `next_reset_at` 变化（全部是最终周期置空），各项核对为 0，JSONL 换时事件 140 / 265 / 314 条全部回填且 `reset_time` 未变，时间线读取 0 错误，扫描名单为空。
 - 一次性测试实例（长期运行的 Web 容器、种子数据、冒烟脚本）和生产库副本演练环境在 2026-11-01 上线后已从测试服务器删除；脚本主副本在管理机 `work/xboard-cycle-test/`（`server/README.txt` 说明重建方法，`server/rehearsal/` 是演练脚本，`server/release-20261101/` 是这次的逐站部署脚本和 Actions 暂停时的镜像构建配方），不在仓库里。

@@ -6,6 +6,7 @@ import { NIcon } from 'naive-ui'
 import { ChevronDownOutline } from '@vicons/ionicons5'
 import { formatBytes } from '@/utils/format'
 import { shortTime } from '../login-log/meta'
+import { carriedText } from './meta'
 import type { ResetLogView } from '../traffic-reset/normalize'
 import ResetReasonCell from '../traffic-reset/ResetReasonCell.vue'
 import ResetChangeCell from '../traffic-reset/ResetChangeCell.vue'
@@ -32,7 +33,8 @@ function toggle(id: number) {
         <span class="ev-cleared" :class="{ zero: !e.cleared }">清零 {{ formatBytes(e.cleared) }}</span>
         <n-icon class="ev-chevron" :size="14"><chevron-down-outline /></n-icon>
       </button>
-      <div v-if="e.quotaBefore !== null || e.expiredBefore !== null || e.note" class="ev-sub">
+      <div v-if="e.carried > 0 || e.quotaBefore !== null || e.expiredBefore !== null || e.note" class="ev-sub">
+        <span v-if="e.carried > 0" class="ev-carried">{{ carriedText(e.carried) }}</span>
         <span v-if="e.quotaBefore !== null || e.quotaAfter !== null" class="ev-chg">
           <span class="k">额度</span>
           <reset-change-cell kind="quota" :before="e.quotaBefore" :after="e.quotaAfter" />
@@ -131,6 +133,10 @@ function toggle(id: number) {
 .k {
   font-size: 12px;
   color: var(--text-muted);
+}
+.ev-carried {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .ev-note {
   color: var(--text-color);

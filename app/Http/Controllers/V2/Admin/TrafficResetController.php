@@ -225,6 +225,8 @@ class TrafficResetController extends Controller
         'trigger_source' => $log->trigger_source,
         'trigger_source_name' => $log->getSourceName(),
         'metadata' => $log->metadata,
+        // 与 logs 接口相同的账本字段（reason、cleared、carried、到期前后……，DESIGN §7.2）
+        ...$log->cycleFields(),
       ];
     });
 

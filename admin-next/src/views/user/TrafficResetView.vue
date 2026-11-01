@@ -347,7 +347,7 @@ async function exportLogs() {
       return
     }
     const head = [
-      '日志ID', '时间', '用户邮箱', '用户ID', '原因', '原因说明', '冗余记录', '触发来源', '清零流量', '清零(字节)',
+      '日志ID', '时间', '用户邮箱', '用户ID', '原因', '原因说明', '冗余记录', '触发来源', '清零流量', '清零(字节)', '计入新周期', '计入新周期(字节)',
       '额度(改前)', '额度(改后)', '到期(改前)', '到期(改后)', '到期前移', '周期ID', '订单ID', '管理员ID', '备注',
     ]
     const lines = [head.join(',')]
@@ -365,6 +365,8 @@ async function exportLogs() {
           sourceLabel(r.source, r.sourceName),
           formatBytes(r.cleared),
           r.cleared,
+          r.carried > 0 ? formatBytes(r.carried) : '',
+          r.carried,
           r.quotaBefore === null ? '' : formatBytes(r.quotaBefore),
           r.quotaAfter === null ? '' : formatBytes(r.quotaAfter),
           r.expiredBefore === null ? '' : formatTime(r.expiredBefore),
@@ -724,6 +726,14 @@ onMounted(() => {
 .log-table :deep(.rl-cleared.zero) {
   font-weight: 400;
   color: var(--text-muted);
+}
+.log-table :deep(.rl-carried) {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .log-table :deep(.rl-gap) {
   padding-left: 22px;

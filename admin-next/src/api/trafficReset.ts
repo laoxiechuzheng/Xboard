@@ -10,7 +10,36 @@ export interface TrafficAmount {
   formatted: string
 }
 
-export interface TrafficResetLog {
+/**
+ * Fields added by the traffic cycle backend (TrafficResetLog::cycleFields(), DESIGN §7.2); absent on older panels
+ * and on older rows of some endpoints, so every one is optional (see traffic-reset/normalize.ts).
+ */
+export interface ResetLogCycleFields {
+  /** Reason code (DESIGN §5); inferred from trigger_source for old rows. */
+  reason?: string | null
+  /** Old row without metadata: the reason was inferred from trigger_source. */
+  legacy?: boolean
+  /** Old row that cleared 0 B: no information, hidden by default. */
+  is_noise?: boolean
+  cycle_id?: number | null
+  order_id?: number | null
+  admin_id?: number | null
+  note?: string | null
+  /** Bytes really cleared: metadata.cleared first (imported 换时 rows whose old_total is 0), else old − new. */
+  cleared?: number | null
+  cleared_upload?: number | null
+  cleared_download?: number | null
+  /** 换时: usage over the quota carried into the new cycle (= new_total of that row); 0 for every other row. */
+  carried?: number | null
+  quota_before?: number | null
+  quota_after?: number | null
+  expired_before?: number | null
+  expired_after?: number | null
+  /** 换时: how much earlier the subscription now expires. */
+  shift_seconds?: number | null
+}
+
+export interface TrafficResetLog extends ResetLogCycleFields {
   id: number
   user_id: number
   /** 'N/A' when the user no longer exists */
@@ -26,23 +55,6 @@ export interface TrafficResetLog {
   metadata: Record<string, unknown> | null
   /** ISO8601 UTC */
   created_at: string
-  // Added by the traffic cycle backend; absent on older panels (see traffic-reset/normalize.ts).
-  /** Reason code (DESIGN §5); inferred from trigger_source for old rows. */
-  reason?: string | null
-  /** Old row that cleared 0 B: no information, hidden by default. */
-  is_noise?: boolean
-  cycle_id?: number | null
-  order_id?: number | null
-  admin_id?: number | null
-  note?: string | null
-  /** Bytes really cleared (metadata.cleared first, e.g. imported 换时 rows whose old_total is 0). */
-  cleared?: number | null
-  quota_before?: number | null
-  quota_after?: number | null
-  expired_before?: number | null
-  expired_after?: number | null
-  /** 换时: how much earlier the subscription now expires. */
-  shift_seconds?: number | null
 }
 
 export interface TrafficResetLogQuery {
@@ -76,12 +88,14 @@ export function fetchTrafficResetLogs(q: TrafficResetLogQuery, opts: { silent?: 
   return http.get<TrafficResetLogResponse>('/traffic-reset/logs', params, opts)
 }
 
-export interface UserResetHistoryItem {
+/** Older backends send only the legacy columns (no new_traffic); the traffic cycle backend adds the cycle fields. */
+export interface UserResetHistoryItem extends ResetLogCycleFields {
   id: number
   reset_type: string
   reset_type_name: string
   reset_time: string
   old_traffic: TrafficAmount
+  new_traffic?: TrafficAmount
   trigger_source: string
   trigger_source_name: string
   metadata: Record<string, unknown> | null

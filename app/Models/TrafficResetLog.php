@@ -239,14 +239,17 @@ class TrafficResetLog extends Model
     {
         $meta = is_array($this->metadata) ? $this->metadata : [];
         $int = static fn($value) => $value === null || $value === '' ? null : (int) $value;
+        $reason = $this->reasonCode();
 
         return [
-            'reason' => $this->reasonCode(),
+            'reason' => $reason,
             'legacy' => $this->isLegacy(),
             'is_noise' => $this->isNoise(),
             'cleared' => (int) ($meta['cleared'] ?? ((int) $this->old_total - (int) $this->new_total)),
             'cleared_upload' => (int) ($meta['cleared_upload'] ?? ((int) $this->old_upload - (int) $this->new_upload)),
             'cleared_download' => (int) ($meta['cleared_download'] ?? ((int) $this->old_download - (int) $this->new_download)),
+            // 换时把超出旧额度的部分计入新周期（DESIGN §3.7），记在 new_total；其他行的 new_total 不是“带入”
+            'carried' => $reason === self::REASON_AUTO_ADVANCE ? max(0, (int) ($meta['carried'] ?? $this->new_total)) : 0,
             'quota_before' => $int($meta['quota_before'] ?? null),
             'quota_after' => $int($meta['quota_after'] ?? null),
             'expired_before' => $int($meta['expired_before'] ?? null),

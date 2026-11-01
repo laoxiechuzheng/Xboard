@@ -9,6 +9,7 @@
     "dev": "vite",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "build": "vue-tsc --noEmit -p tsconfig.json && vite build && node scripts/check-chunks.mjs",
+    "test": "node scripts/run-tests.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

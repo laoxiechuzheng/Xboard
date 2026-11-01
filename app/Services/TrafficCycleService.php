@@ -176,6 +176,8 @@ class TrafficCycleService
             'closed_cycle_id' => null,
             'new_cycle_id' => null,
             'reset_log_id' => null,
+            'cleared' => 0,
+            'carried' => 0,
         ];
         if (!$this->enabled() || !$user->getKey()) {
             return $refused('no_cycle', $snapshot);
@@ -193,16 +195,20 @@ class TrafficCycleService
             $upload = (int) $user->u;
             $download = (int) $user->d;
             $quotaBefore = (int) $user->transfer_enable;
-            // a caller that says how much traffic is about to be added gets exhaustion re-checked under the
-            // row lock, so a stale or duplicate trigger cannot burn the cycle it just opened
-            if (array_key_exists('pending_bytes', $trigger)
-                && $upload + $download + (int) $trigger['pending_bytes'] < $quotaBefore) {
+            // exhaustion is always re-checked under the row lock, so a stale or duplicate trigger cannot burn
+            // the cycle it just opened. pending_bytes (traffic a caller is about to record, TrafficReset 1.2.0
+            // advanced before the report was recorded) still counts for callers that pass it
+            $pending = max(0, (int) ($trigger['pending_bytes'] ?? 0));
+            if ($upload + $download + $pending < $quotaBefore) {
                 return $refused('not_exhausted', $before);
             }
             $expiredBefore = $this->expiry($user);
             $quota = (int) $check['next_quota'];
+            // the old cycle absorbs exactly its quota; what was used beyond it is carried into the new cycle
+            [$carryUpload, $carryDownload] = $this->overflow($upload, $download, $quotaBefore);
+            $carried = $carryUpload + $carryDownload;
 
-            $this->finish($cycle, $now, TrafficCycle::REASON_ADVANCED, $upload, $download);
+            $this->finish($cycle, $now, TrafficCycle::REASON_ADVANCED, $upload - $carryUpload, $download - $carryDownload);
             $user->expired_at = $check['expired_after'];
             $next = $this->createCycle($user, [
                 'started_at' => $now,
@@ -222,8 +228,9 @@ class TrafficCycleService
                 'expired_before' => $expiredBefore,
                 'expired_after' => $check['expired_after'],
                 'shift_seconds' => $check['shift_seconds'],
+                'carried' => $carried,
                 'trigger' => $trigger ?: null,
-            ], $upload, $download, true, true);
+            ], $upload, $download, true, true, $carryUpload, $carryDownload);
             $user->transfer_enable = $quota;
             $user->save();
 
@@ -236,6 +243,8 @@ class TrafficCycleService
                 'closed_cycle_id' => (int) $cycle->id,
                 'new_cycle_id' => (int) $next->id,
                 'reset_log_id' => $logId,
+                'cleared' => $upload + $download - $carried,
+                'carried' => $carried,
             ];
         });
 
@@ -479,7 +488,7 @@ class TrafficCycleService
                 'expired_before' => $expiredBefore,
                 'expired_after' => $expiredAfter,
             ]));
-            $this->applyExpiryRule($cycle, $expiredAfter, $now, ['by' => 'order', 'order_id' => $order->id]);
+            $this->applyExpiryRule($cycle, $known, $expiredAfter, $this->methodFor($user), $now, ['by' => 'order', 'order_id' => $order->id]);
             $cycle->save();
             $user->next_reset_at = $this->nextResetFor($cycle->ends_at, $expiredAfter);
 
@@ -627,14 +636,17 @@ class TrafficCycleService
      *
      * @return \Illuminate\Support\Collection<int, User>
      */
-    public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?int $now = null): \Illuminate\Support\Collection
+    public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?int $now = null, ?int $afterId = null): \Illuminate\Support\Collection
     {
         if (!$this->enabled()) {
             return collect();
         }
         $now ??= $this->now();
 
+        // $afterId: keyset paging (v2_user.id > afterId), so users who stay ineligible at low ids cannot
+        // starve the ones after them
         return User::query()
+            ->when($afterId !== null, fn($query) => $query->where('v2_user.id', '>', $afterId))
             ->select('v2_user.*')
             ->join('v2_traffic_cycle as cycle', function ($join) {
                 $join->on('cycle.user_id', '=', 'v2_user.id')->whereNull('cycle.ended_at');
@@ -765,6 +777,19 @@ class TrafficCycleService
             $method = (int) admin_setting('reset_traffic_method', Plan::RESET_TRAFFIC_MONTHLY);
         }
         return (int) $method;
+    }
+
+    /**
+     * The method schedules resets (DESIGN §3.1); 不重置 and unknown methods only end at the expiry.
+     */
+    public function periodic(int $method): bool
+    {
+        return in_array($method, [
+            Plan::RESET_TRAFFIC_FIRST_DAY_MONTH,
+            Plan::RESET_TRAFFIC_MONTHLY,
+            Plan::RESET_TRAFFIC_FIRST_DAY_YEAR,
+            Plan::RESET_TRAFFIC_YEARLY,
+        ], true);
     }
 
     public function minSeconds(): int
@@ -923,7 +948,7 @@ class TrafficCycleService
         $known = $this->knownExpiry($cycle);
         if ($known !== $expiredAt) {
             $cycle->pushEvent($this->event($now, 'expiry_changed', $by, ['before' => $known, 'after' => $expiredAt]));
-            $this->applyExpiryRule($cycle, $expiredAt, $now, $by);
+            $this->applyExpiryRule($cycle, $known, $expiredAt, $this->methodFor($user), $now, $by);
         }
 
         if ($this->intOrNull($cycle->plan_id) !== $this->intOrNull($user->plan_id)) {
@@ -949,10 +974,22 @@ class TrafficCycleService
 
     /**
      * 到期时间变化时对当前周期重新评估（DESIGN §3.3 第 2 条），null 视为无限远。
+     * $expiredBefore：账本此前记录的到期时间，用来判断当前周期是不是最终周期。
      */
-    private function applyExpiryRule(TrafficCycle $cycle, ?int $expiredAt, int $now, array $by): void
+    private function applyExpiryRule(TrafficCycle $cycle, ?int $expiredBefore, ?int $expiredAt, int $method, int $now, array $by): void
     {
         $endsAt = $cycle->ends_at;
+        // 不按周期重置的套餐（不重置）：最终周期以到期为终点，到期变了终点跟着变（含改为长期 null），
+        // 否则延长到期会把旧到期点变成一次重置，在那里清零已用流量
+        if (!$this->periodic($method) && $this->isFinal($endsAt, $expiredBefore)) {
+            if ($expiredAt !== null && ($endsAt === null || $expiredAt < $endsAt)) {
+                $this->setEnds($cycle, $expiredAt, 'expiry_shrunk', $now, $by);
+            } else {
+                // 到期变化本身已记在 renewal / expiry_changed 事件里
+                $cycle->ends_at = $expiredAt;
+            }
+            return;
+        }
         if ($expiredAt === null) {
             return;
         }
@@ -983,12 +1020,9 @@ class TrafficCycleService
     private function knownExpiry(TrafficCycle $cycle): ?int
     {
         foreach (array_reverse($cycle->events ?? []) as $event) {
-            $type = $event['type'] ?? null;
-            if ($type === 'renewal' && array_key_exists('expired_after', $event)) {
-                return $this->intOrNull($event['expired_after']);
-            }
-            if ($type === 'expiry_changed' && array_key_exists('after', $event)) {
-                return $this->intOrNull($event['after']);
+            $expiry = is_array($event) ? TrafficCycle::expiryOf($event) : false;
+            if ($expiry !== false) {
+                return $expiry;
             }
         }
         return $this->intOrNull($cycle->expired_at_start);
@@ -1163,7 +1197,7 @@ class TrafficCycleService
                     'before' => $before['expired_at'],
                     'after' => $expiredAt,
                 ]));
-                $this->applyExpiryRule($probe, $expiredAt, $now, ['by' => 'admin']);
+                $this->applyExpiryRule($probe, $before['expired_at'], $expiredAt, $method, $now, ['by' => 'admin']);
             }
             if ($planChanged) {
                 $probe->pushEvent($this->event($now, 'plan_changed', ['by' => 'admin'], [
@@ -1364,22 +1398,49 @@ class TrafficCycleService
     /**
      * Zero the usage, write the log when something was cleared and count the reset.
      * $alwaysLog: an advance moves the expiry even when nothing was used, so it is always logged.
+     * $carryUpload / $carryDownload: usage that stays on the user (an advance carries what was used beyond
+     * the old quota into the new cycle); the log records it as new_upload / new_download.
      *
      * @return int|null reset log id
      */
-    private function clearUsage(User $user, int $now, string $triggerSource, array $metadata, int $upload, int $download, bool $countReset = true, bool $alwaysLog = false): ?int
+    private function clearUsage(User $user, int $now, string $triggerSource, array $metadata, int $upload, int $download, bool $countReset = true, bool $alwaysLog = false, int $carryUpload = 0, int $carryDownload = 0): ?int
     {
-        $user->u = 0;
-        $user->d = 0;
+        $user->u = $carryUpload;
+        $user->d = $carryDownload;
         $user->last_reset_at = $now;
-        if ($upload === 0 && $download === 0 && !$alwaysLog) {
+        if ($upload === $carryUpload && $download === $carryDownload && !$alwaysLog) {
             return null;
         }
         if ($countReset) {
             $user->reset_count = (int) $user->reset_count + 1;
         }
-        $log = app(TrafficResetService::class)->writeLog($user, $triggerSource, $upload, $download, $metadata);
+        $log = app(TrafficResetService::class)->writeLog($user, $triggerSource, $upload, $download, $metadata, $carryUpload, $carryDownload);
         return (int) $log->id;
+    }
+
+    /**
+     * Usage beyond the quota, split between upload and download in proportion to them (whole bytes, the
+     * parts add up exactly and never exceed either side).
+     *
+     * @return array{0: int, 1: int} [upload carried, download carried]
+     */
+    private function overflow(int $upload, int $download, int $quota): array
+    {
+        $upload = max(0, $upload);
+        $download = max(0, $download);
+        $used = $upload + $download;
+        $over = max(0, $used - max(0, $quota));
+        if ($over === 0 || $used === 0) {
+            return [0, 0];
+        }
+        // floats: upload × over can exceed 64-bit integers; the clamp below absorbs rounding
+        $carryUpload = min($upload, max(0, (int) floor($over * ($upload / $used))));
+        $carryDownload = $over - $carryUpload;
+        if ($carryDownload > $download) {
+            $carryDownload = $download;
+            $carryUpload = $over - $download;
+        }
+        return [$carryUpload, $carryDownload];
     }
 
     private function afterReset(User $user): void
@@ -1603,6 +1664,7 @@ class TrafficCycleService
             'cleared' => $fields['cleared'],
             'cleared_upload' => $fields['cleared_upload'],
             'cleared_download' => $fields['cleared_download'],
+            'carried' => $fields['carried'],
             'quota_before' => $fields['quota_before'],
             'quota_after' => $fields['quota_after'],
             'expired_before' => $fields['expired_before'],

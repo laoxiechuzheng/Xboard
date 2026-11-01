@@ -5,7 +5,7 @@ import { NButton, NIcon } from 'naive-ui'
 import { CopyOutline } from '@vicons/ionicons5'
 import { copyText } from '@/utils/clipboard'
 import { formatBytes, formatTime } from '@/utils/format'
-import { NOISE_META, durationText, reasonMeta, sourceLabel } from '../traffic-cycle/meta'
+import { NOISE_META, carriedText, durationText, reasonMeta, sourceLabel } from '../traffic-cycle/meta'
 import type { ResetLogView } from './normalize'
 
 const props = withDefaults(defineProps<{ log: ResetLogView; compact?: boolean }>(), { compact: false })
@@ -22,6 +22,7 @@ const clearedText = computed(() => {
   if (l.clearedUpload !== null || l.clearedDownload !== null) {
     parts.push(`上行 ${formatBytes(l.clearedUpload)} · 下行 ${formatBytes(l.clearedDownload)}`)
   }
+  if (l.carried > 0) parts.push(carriedText(l.carried))
   return parts.join('，')
 })
 const pair = (a: string, b: string) => (a === b ? a : `${a} → ${b}`)

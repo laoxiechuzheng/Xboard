@@ -116,6 +116,11 @@ export function sourceLabel(source: string | null | undefined, backendName?: str
   return SOURCE_LABELS[source] ?? (backendName && backendName !== source ? backendName : source)
 }
 
+/** 换时 row: the usage over the quota that moved into the new cycle (not cleared); '' when nothing was carried. */
+export function carriedText(carried: number | null | undefined): string {
+  return carried && carried > 0 ? `超出额度的 ${formatBytes(carried)} 计入新周期` : ''
+}
+
 /** trigger_source values the logs endpoint accepts as a filter. */
 export const SOURCE_FILTER_OPTIONS = ['cron', 'auto', 'manual', 'order', 'gift_card', 'user_access', 'api'].map((value) => ({
   label: SOURCE_LABELS[value],

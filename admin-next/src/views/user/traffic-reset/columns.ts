@@ -3,6 +3,7 @@
 import { h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { formatBytes } from '@/utils/format'
+import { carriedText } from '../traffic-cycle/meta'
 import type { ResetLogView } from './normalize'
 import ResetTimeCell from './ResetTimeCell.vue'
 import ResetUserCell from './ResetUserCell.vue'
@@ -17,7 +18,7 @@ export interface ResetLogColumnOptions {
 }
 
 // Tuned for a 1440px screen with the sidebar open (~1120px of table); 原因 and 关联 take any extra width.
-const W = { expand: 36, time: 104, user: 172, reason: 230, cleared: 104, quota: 132, expiry: 150, links: 150 }
+const W = { expand: 36, time: 104, user: 172, reason: 230, cleared: 124, quota: 132, expiry: 150, links: 150 }
 
 export function buildResetLogColumns(opts: ResetLogColumnOptions): DataTableColumns<ResetLogView> {
   return [
@@ -35,7 +36,13 @@ export function buildResetLogColumns(opts: ResetLogColumnOptions): DataTableColu
       key: 'cleared',
       width: W.cleared,
       align: 'right',
-      render: (r) => h('span', { class: ['rl-cleared', { zero: !r.cleared }] }, formatBytes(r.cleared)),
+      render: (r) => {
+        const amount = h('span', { class: ['rl-cleared', { zero: !r.cleared }] }, formatBytes(r.cleared))
+        if (!(r.carried > 0)) return amount
+        // 换时: the usage over the quota was not cleared but moved into the new cycle. The column is narrow, so the
+        // cell shows a one-line "结转 X" and the tooltip carries the full sentence.
+        return h('div', [amount, h('div', { class: 'rl-carried', title: carriedText(r.carried) }, `结转 ${formatBytes(r.carried)}`)])
+      },
     },
     {
       title: '额度',

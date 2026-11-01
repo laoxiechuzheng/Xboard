@@ -17,7 +17,9 @@ export interface ResetLogView {
   inferred: boolean
   noise: boolean
   cleared: number
-  /** Only known when the cleared amount is the row's own old_upload / old_download. */
+  /** 换时: usage over the quota that was carried into the new cycle (bytes); 0 for every other row. */
+  carried: number
+  /** Only known when the upload / download parts add up to the cleared amount. */
   clearedUpload: number | null
   clearedDownload: number | null
   quotaBefore: number | null
@@ -59,26 +61,49 @@ export function hasCycleFields(r: TrafficResetLog): boolean {
 
 /** traffic-reset/logs rows, or traffic-reset/user/{id}/history items with the user id added. */
 export type ResetLogInput = Omit<TrafficResetLog, 'user_email' | 'new_traffic' | 'created_at'> &
-  Partial<Pick<TrafficResetLog, 'user_email' | 'created_at'>>
+  Partial<Pick<TrafficResetLog, 'user_email' | 'new_traffic' | 'created_at'>>
+
+/** Both parts known and adding up to the cleared amount, else null / null. */
+function split(up: number | null, down: number | null, cleared: number): [number | null, number | null] {
+  return up !== null && down !== null && up >= 0 && down >= 0 && up + down === cleared ? [up, down] : [null, null]
+}
 
 export function normalizeResetLog(r: ResetLogInput): ResetLogView {
   const m = metaOf(r.metadata)
   const metaReason = isReasonCode(m?.reason) ? (m!.reason as string) : null
+  const reason = (isReasonCode(r.reason) ? r.reason : null) ?? metaReason ?? inferLegacyReason(r.trigger_source)
   const oldTotal = num(r.old_traffic?.total) ?? 0
-  const cleared = num(r.cleared) ?? num(m?.cleared) ?? oldTotal
-  const splitKnown = cleared === oldTotal
+  const newTotal = num(r.new_traffic?.total)
+  // Same order as TrafficResetLog::cycleFields(): the backend's value, metadata.cleared (imported 换时 rows whose
+  // old_total is 0), then old − new (修改已用 40 GB → 10 GB cleared 30 GB, 换时 keeps the carried part). Only a
+  // response without new_traffic (older history endpoint) falls back to the whole old total.
+  const cleared =
+    num(r.cleared) ?? num(m?.cleared) ?? (newTotal !== null ? Math.max(0, oldTotal - newTotal) : oldTotal)
+  const diff = (k: 'upload' | 'download') => {
+    const o = num(r.old_traffic?.[k])
+    if (o === null) return null
+    if (!r.new_traffic) return cleared === oldTotal ? o : null
+    const n = num(r.new_traffic[k])
+    return n === null ? null : o - n
+  }
+  const own = split(num(r.cleared_upload), num(r.cleared_download), cleared)
+  const [up, down] = own[0] !== null ? own : split(diff('upload'), diff('download'), cleared)
+  // carried = new_total of a 换时 row (DESIGN contract); rows from a backend without the field derive it the same way.
+  const carried =
+    num(r.carried) ?? num(m?.carried) ?? (reason === 'auto_advance' && newTotal !== null ? Math.max(0, newTotal) : 0)
   return {
     id: r.id,
     userId: r.user_id,
     email: r.user_email && r.user_email !== 'N/A' ? r.user_email : null,
     at: toSeconds(r.reset_time),
     // Anything that is not a DESIGN §5 code (e.g. an admin's free text) falls back to the trigger source.
-    reason: (isReasonCode(r.reason) ? r.reason : null) ?? metaReason ?? inferLegacyReason(r.trigger_source),
+    reason,
     inferred: !metaReason,
     noise: typeof r.is_noise === 'boolean' ? r.is_noise : oldTotal === 0 && !metaReason,
     cleared,
-    clearedUpload: splitKnown ? num(r.old_traffic?.upload) : null,
-    clearedDownload: splitKnown ? num(r.old_traffic?.download) : null,
+    carried,
+    clearedUpload: up,
+    clearedDownload: down,
     quotaBefore: num(r.quota_before ?? m?.quota_before),
     quotaAfter: num(r.quota_after ?? m?.quota_after),
     expiredBefore: num(r.expired_before ?? m?.expired_before),
@@ -102,10 +127,8 @@ export function normalizeCycleEvent(e: CycleResetEvent, userId: number): ResetLo
   const m = metaOf(e.metadata)
   const known = isReasonCode(e.reason)
   const cleared = num(e.cleared) ?? 0
-  const up = num(e.cleared_upload)
-  const down = num(e.cleared_download)
   // Imported 换时 rows report metadata.cleared but a 0 / 0 split; only show a split that adds up.
-  const splitKnown = up !== null && down !== null && up + down === cleared
+  const [up, down] = split(num(e.cleared_upload), num(e.cleared_download), cleared)
   return {
     id: e.id,
     userId,
@@ -115,8 +138,9 @@ export function normalizeCycleEvent(e: CycleResetEvent, userId: number): ResetLo
     inferred: !known || (e.legacy ?? !isReasonCode(m?.reason)),
     noise: !!e.is_noise,
     cleared,
-    clearedUpload: splitKnown ? up : null,
-    clearedDownload: splitKnown ? down : null,
+    carried: Math.max(0, num(e.carried) ?? 0),
+    clearedUpload: up,
+    clearedDownload: down,
     quotaBefore: num(e.quota_before),
     quotaAfter: num(e.quota_after),
     expiredBefore: num(e.expired_before),

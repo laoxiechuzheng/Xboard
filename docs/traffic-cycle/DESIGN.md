@@ -1,6 +1,6 @@
 # 流量周期账本（Traffic Cycle）设计与接口约定
 
-> 状态：实现中（2026-11-01）。本文件是后端、Admin Next、LiquidNext、ez 主题、TrafficReset 插件、AiTicketReply 插件共同的接口约定。改接口先改本文件。
+> 状态：2026-11-01 已上线三站。之后的修改（尚未部署）：§3.3 不重置套餐随到期延长、§3.7 换时结算（`carried`）与 `traffic.process.after`、扫描分页、§4.3 事件裁剪保留到期事件、§7.2 用户重置历史带账本字段。本文件是后端、Admin Next、LiquidNext、ez 主题、TrafficReset 插件、AiTicketReply 插件共同的接口约定。改接口先改本文件。
 
 ## 1. 要解决的问题
 
@@ -62,6 +62,7 @@ planEnd(S, E):
    - 新 E ≤ 当前 `ends_at`：`ends_at = E`（变成最终周期）。
    - 否则保持原 `ends_at` 不动（延长到期不会缩短当前周期）；但若 `E - ends_at < M`，`ends_at = E`（零头并入）。
    - 改为长期（新 E 为 null）：当前 `ends_at` 不动（已承诺的重置照常兑现），之后的周期不再排期。
+   - **不按周期重置的方式**（`2` 不重置，含套餐为 null 且站点默认为 `2`）且当前周期是最终周期（`ends_at` 为 null 或 ≥ 原 E）：`ends_at` 跟着新 E 走（新 E 为 null 时也为 null），周期保持最终周期。否则延长到期会让原到期点变成一次重置、在那里清零已用流量。到期提前（或从长期改成有日期）时照常记 `schedule_changed`（`why = expiry_shrunk`）；延长或改为长期时不另记事件，到期变化本身已记在 `renewal` / `expiry_changed` 事件里。续费、礼品卡、管理员修改都走这条规则；按周期重置的方式仍按上面三条。不是最终周期的（旧数据 bootstrap 时沿用了 `next_reset_at`）按上面三条，已承诺的重置照常兑现。
 3. 套餐重置方式变化（PlanObserver）：按新方式从 S 重新 `planEnd`。
 
 `v2_user.next_reset_at` 始终 = 当前周期 `ends_at`（非最终周期时），最终周期为 null。定时任务 `reset:traffic` 继续按 `next_reset_at <= now` 选人。
@@ -123,13 +124,24 @@ advanceEligibility(user, minRemainingDays):
   新周期：S = now，quota = next_quota ?? quota，ends_at = planEnd(now, E')
 ```
 
-`advance(user, trigger)` 按上式执行：关闭当前周期 `end_reason = advanced`，开新周期 `start_reason = advance`，`u = d = 0`，`transfer_enable = 新 quota`，`expired_at = E'`，写 `auto_advance` 日志（清零量为真实已用量，带 `shift_seconds`、到期前后、额度前后）。
+`advance(user, trigger)` 按上式执行：关闭当前周期 `end_reason = advanced`，开新周期 `start_reason = advance`，`transfer_enable = 新 quota`，`expired_at = E'`，写 `auto_advance` 日志（带 `shift_seconds`、到期前后、额度前后）。
 
-- **换时一定写日志**：即使清零量为 0（到期时间变了，必须可追溯），是 §4.2“清零量为 0 不写日志”的唯一例外。
-- **锁内复核是否用尽**：`trigger.pending_bytes`（本次上报将要记账的流量）存在时，在锁住用户行后检查 `u + d + pending_bytes ≥ transfer_enable`，不满足返回 `not_exhausted`，什么都不改。防止并发或过时的触发把刚开启的新周期作废、到期再前移一整个周期。插件 1.2.0 总是传这个字段。
-- **触发**（插件）：节点上报时按“上报量 × 节点倍率”判断（`TrafficFetchJob` 就是这样记账的）；续费订单开通后（`auto_reset_on_renewal`）；**每分钟扫描**已经用尽的用户（`sweep_exhausted`，默认开）。节点只给 `u + d < transfer_enable` 的用户下发，用户一旦用尽就再也没有上报，续费、管理员延长到期、插件后来才开启、倍率大于 1 的节点漏触发等情况只能靠扫描。扫描名单由核心给出：`exhaustedCandidates(minRemainingDays)` = 已用尽、未封禁、额度 > 0、`E ≥ now + minRemainingDays 天`、当前周期未到点且不是最终周期。没换成的用户一小时内不再扫，避免审计日志刷屏。
+- **结算（不多扣也不少扣）**：在锁住用户行后读 `U = u`、`D = d`、`Q = transfer_enable`，超出量 `carried = max(0, U + D − Q)`，按上行/下行比例拆成整数（两部分之和正好等于 `carried`，各自不超过 `U` / `D`）。
+  - 旧周期 `u_end / d_end = U / D − 带入部分`：用尽时正好等于 `Q`。
+  - 新周期从带入的用量开始：`u / d = 带入部分`（不是 0）。
+  - 重置日志：`old_upload / old_download = U / D`（真实已用量），`new_upload / new_download = 带入部分`，`metadata.carried = carried`；清零量 `cleared = old_total − new_total`（用尽时 = `Q`）。
+  - 返回值另带 `cleared`、`carried`。
+  - `carried ≥ 新 quota` 时换时后仍是用尽状态。`advance()` 不在内部循环，下一次记账触发或每分钟扫描会再换一次，那是用户的真实用量，照常进行（不限制每天的换时次数，不设冷却）。
+- **换时一定写日志**：即使清零量为 0（额度为 0 时；到期时间变了，必须可追溯），是 §4.2“清零量为 0 不写日志”的唯一例外。
+- **锁内复核是否用尽**：总是在锁住用户行后检查 `U + D + pending_bytes ≥ Q`（`trigger.pending_bytes` 不传按 0），不满足返回 `not_exhausted`，什么都不改。防止并发或过时的触发把刚开启的新周期作废、到期再前移一整个周期。`pending_bytes` 只为兼容 TrafficReset 1.2.0（它在上报记账**之前**换时、传本次上报量；跨过额度的那次上报换时时 `U + D < Q`，`carried = 0`，本次上报随后整笔记到新周期，与 1.2.0 原行为相同）。1.2.1 在记账之后触发，固定传 0。核心里没有其他调用方，没有“未用尽也换时”的选项。
+- **触发**（插件）：
+  - 节点上报**记账之后**：`TrafficFetchJob` 按“上报量 × 节点倍率”加到 `u / d` 后调用 `traffic.process.after`（§6），TrafficReset 1.2.1 对本批里已用尽的用户换时。不在 `traffic.process.before` 里换时，否则本次上报里旧额度内的部分会在新周期再算一次。
+  - 续费订单开通后（`auto_reset_on_renewal`）。
+  - **每分钟扫描**已经用尽的用户（`sweep_exhausted`，默认开）。节点只给 `u + d < transfer_enable` 的用户下发，用户一旦用尽就再也没有上报，续费、管理员延长到期、插件后来才开启、`carried` 超过新额度、面板还没有 `traffic.process.after` 钩子等情况只能靠扫描。扫描名单由核心给出：`exhaustedCandidates(minRemainingDays, limit, now, afterId)` = 已用尽、未封禁、额度 > 0、`E ≥ now + minRemainingDays 天`、当前周期未到点且不是最终周期，按用户 ID 升序，`afterId` 给出时只取 `id > afterId`。插件每次最多处理 100 人，把最后一个 ID 记在缓存里，下次接着扫；不足一页就从头开始，排在前面一直换不成的用户不会挡住后面的人。只有换时失败（`failed` / 异常）的用户一小时内不再扫；资格不符（`skipped`）的由插件按资格状态节流（状态一变立即重新判断），`not_exhausted` 不节流。
 
 例（工单 #6982 的理想结果）：特殊周期 `[10-31 23:03, 12-01 23:59:59]` 40GB，续费后 E = 01-01 23:59:59。11-20 12:00 用尽 → shift 11.5 天 → E' = 12-21 12:00，新周期 `[11-20 12:00, 12-21 12:00]`，额度恢复 100GB。
+
+例（结算）：额度 100 GB 已用 99 GB，一次上报记账 3 GB 后为 102 GB → 旧周期按 100 GB 结束，新周期从 2 GB 开始；日志 `old_total = 102 GB`、`new_total = 2 GB`、`cleared = 100 GB`、`carried = 2 GB`。
 
 ### 3.8 其他路径
 
@@ -171,8 +183,10 @@ advanceEligibility(user, minRemainingDays):
 ```json
 {"reason":"auto_advance","cycle_id":12,"prev_cycle_id":11,"order_id":null,"admin_id":null,
  "quota_before":42949672960,"quota_after":107374182400,"expired_before":1798819199,"expired_after":1797825600,
- "shift_seconds":994799,"note":null,"trigger":{"source":"traffic_report","server_id":3}}
+ "shift_seconds":994799,"note":null,"carried":2147483648,"trigger":{"source":"traffic_report","server_id":3}}
 ```
+
+- `carried` 只有换时行有（§3.7，超出旧额度、计入新周期的用量，等于该行 `new_total`），其他行没有这个键。
 
 - **清零量为 0 不写日志**（同时也不 `reset_count + 1`）。周期的开始/结束都在周期表里，不需要 0 B 行来证明。例外：换时（`auto_advance`）总是写，见 §3.7。
 - `reason` 为空时 `metadata` 里不写这个键：MySQL 把 JSON null 读成字符串 `"null"`，SQL 里会被当成“有原因”，与 PHP 判断不一致。
@@ -187,6 +201,8 @@ advanceEligibility(user, minRemainingDays):
 ```
 
 `type`：`renewal` 续费；`quota_changed`（`before/after/scope`）；`expiry_changed`（`before/after`）；`schedule_changed`（`ends_before/ends_after/why`，why ∈ `expiry_shrunk`/`tail_merged`/`method_changed`/`short_fix`）；`usage_cleared`（`log_id/cleared/reason`）；`plan_changed`（`from/to`）；`note_changed`。`by`：`order` / `admin`（带 `admin_id`）/ `gift_card` / `plugin` / `system`。
+
+账本记得的到期时间取最新一条带到期值的事件（`renewal.expired_after` 或 `expiry_changed.after`，null = 长期），没有时取周期的 `expired_at_start`。超过 50 条时先删最旧的其他事件，最新那条带到期值的事件始终保留；否则账本会回落到周期开始时的到期，把订阅误判为已变更或已到期。
 
 ### 4.4 `v2_order.expires_at`（新增列，int unsigned null）
 
@@ -235,16 +251,19 @@ public function advanceEligibility(User $user, int $minRemainingDays, ?int $now 
     // ['eligible'=>bool,'reason'=>code,'shift_seconds'=>int,'next_quota'=>int,'expired_after'=>?int,'cycle_ends_at'=>?int]
 public function advance(User $user, array $trigger, int $minRemainingDays = 30, ?int $now = null): array
     // ['ok'=>bool,'reason'=>code,'before'=>snapshot,'after'=>snapshot,'shift_seconds'=>int,
-    //  'closed_cycle_id'=>?int,'new_cycle_id'=>?int,'reset_log_id'=>?int]
+    //  'closed_cycle_id'=>?int,'new_cycle_id'=>?int,'reset_log_id'=>?int,'cleared'=>int,'carried'=>int]
     // snapshot = id,email,plan_id,plan_name,u,d,used_traffic,transfer_enable,expired_at,next_reset_at,last_reset_at,reset_count
+    // before / after 是锁住用户行后读到 / 写入的值（被拒时 after = before）；trigger.pending_bytes 可选（§3.7）
 public function rollover(User $user, ?int $now = null): bool
 public function reconcile(User $user, ?int $now = null): void
 public static function planEnd(int $start, ?int $expiredAt, int $method, int $minSeconds, string $tz): ?int   // 纯函数
 public function enabled(): bool                                                    // 账本表已建好（新镜像上线、迁移未跑时为 false）
-public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?int $now = null): Collection   // §3.7 扫描名单
+public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?int $now = null, ?int $afterId = null): Collection   // §3.7 扫描名单，afterId = 按用户 ID 分页
 ```
 
 换时策略钩子：核心调用 `HookManager::filter('traffic_cycle.advance_policy', null, $user)`。TrafficReset 插件启用时返回 `['enabled'=>bool,'min_remaining_days'=>int]`（按该用户的重置方式和插件开关算），为 null 时视为未启用。时间线里的 `advance` 段据此生成。
+
+上报记账钩子：`TrafficFetchJob` 把一批上报（`$data = [user_id => [上行, 下行]]`，未乘倍率）按 `× $server['rate']` 加到 `u / d` 之后，调用 `HookManager::call('traffic.process.after', [$server, $protocol, $data])`（`$server` 是数组，同 `traffic.process.before`）。监听器收到这个三元数组。监听器抛出的异常只记日志（`traffic.process.after hook failed`），已记的流量不受影响，任务也不会失败（`tries = 1`，重跑会重复记账）。没有这个钩子的旧面板上，TrafficReset 1.2.1 由每分钟扫描换时（最多晚一分钟）；旧面板的 `advance()` 换时直接清零，超出部分不带入新周期。这个钩子跑在常驻的 Horizon 队列 worker 里，worker 只在启动时按 `v2_plugins` 加载一次插件（后台停用插件或改配置不会让它重新加载），所以队列里触发的监听器（`traffic.process.after`、`order.open.after`）要先按 `v2_plugins` 重新读本插件的 `is_enabled` 和 `config`：已停用或已卸载时不处理，否则用数据库里的当前配置。定时任务同理（Octane 的 tick 在常驻进程里调用 `schedule:run`）。TrafficReset 1.2.1 在这两个监听器和每分钟扫描里这样做（只在本批有已用尽的用户、续费订单或每次扫描时多一次查询）。
 
 ## 7. HTTP 接口
 
@@ -281,7 +300,7 @@ public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?in
   "history_total": 0,
   "events": [                               // 有意义的重置记录（不含噪声），最新在前
     {"id": 29779, "at": 1792770783, "reason": "cycle_rollover", "legacy": true,
-     "trigger_source": "cron", "cleared": 74777028792, "cleared_upload": 0, "cleared_download": 0,
+     "trigger_source": "cron", "cleared": 74777028792, "cleared_upload": 0, "cleared_download": 0, "carried": 0,
      "quota_before": null, "quota_after": null, "expired_before": null, "expired_after": null,
      "shift_seconds": null, "cycle_id": null, "order_id": null, "note": null}
   ],
@@ -289,7 +308,8 @@ public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?in
 }
 ```
 
-- 周期对象另带 `u_end` / `d_end`（已结束周期结束时的已用量，当前周期为 null）。
+- 周期对象另带 `u_end` / `d_end`（已结束周期结束时的已用量，当前周期为 null）。换时结束的周期用尽时正好等于额度（§3.7）。
+- `events[].carried`：换时带入新周期的用量（= 该行 `new_total`），其他行和旧行为 0。界面在换时行 `carried > 0` 时于清零量旁注明“超出额度的 X 计入新周期”。
 - 用户端 `events[].note` 只给出 `admin_restart` / `admin_usage_edit` 行携带的周期备注；管理员手动重置（`admin_reset`）填写的原因只在后台时间线可见。
 - 用户端周期对象的 `events` 不含 `admin_id`（哪位管理员操作的属于内部信息），后台时间线保留。
 
@@ -300,7 +320,8 @@ public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?in
 | `GET /api/v2/{secure}/user/trafficCycle/fetch?user_id=` | 同 7.1，`opts.admin = true`：`events` 含噪声行（`is_noise` 标记）、`metadata` 原文、`admin_id`；额外返回 `user`（id、email、transfer_enable、u、d、expired_at、next_reset_at、last_reset_at、reset_count）。 |
 | `GET /api/v2/{secure}/user/trafficCycle/preview` | §3.6。返回 `{"data":{"current":Cycle,"upcoming":[...],"effects":[...],"warnings":[...]}}`。`effects`：`cycle_restart`、`quota_cycle_only`、`quota_standing`、`ends_changed`、`expiry_changed`、`usage_cleared`、`plan_changed`。`warnings`：`ends_after_expiry`、`ends_before_now`、`short_cycle`（< M）、`quota_below_used`、`no_plan`。 |
 | `POST /api/v2/{secure}/user/update` | 新增 §3.6 四个可选参数。 |
-| `GET /api/v2/{secure}/traffic-reset/logs` | 原参数不变；新增 `hide_noise`（0/1，默认 0）、`reason`。每行新增 `reason`、`is_noise`、`cycle_id`、`order_id`、`admin_id`、`note`、`cleared`（真实清零量，优先 `metadata.cleared`）、`quota_before/after`、`expired_before/after`、`shift_seconds`。 |
+| `GET /api/v2/{secure}/traffic-reset/logs` | 原参数不变；新增 `hide_noise`（0/1，默认 0）、`reason`。每行新增 `reason`、`is_noise`、`cycle_id`、`order_id`、`admin_id`、`note`、`cleared`（真实清零量，优先 `metadata.cleared`）、`carried`（换时带入新周期的用量，其他行 0）、`quota_before/after`、`expired_before/after`、`shift_seconds`。 |
+| `GET /api/v2/{secure}/traffic-reset/user/{id}/history` | 原字段不变，每行另带与 `traffic-reset/logs` 相同的账本字段（Admin Next 的“流量重置”对话框用）。 |
 | `POST /api/v2/{secure}/order/assign` | 新增可选 `expire_hours`（1–720，默认 72）。订单列表/详情返回 `expires_at`。 |
 
 - `effects` / `warnings` 的元素是对象 `{"type": 代码, ...}`，附带相关数值，例如 `{"type":"ends_changed","before":…,"after":…,"why":"restart"}`、`{"type":"quota_below_used","quota":…,"used":…}`、`{"type":"short_cycle","seconds":…,"min_seconds":…}`。参数本身不合法（`keep` 时传 `cycle_ends_at`、`cycle_ends_at ≤ now` 或 `> E`）时 `warnings` 另含 `{"type":"invalid","message":"…"}`；`user/update` 对同样的参数返回 422 和该中文提示，什么都不改。
@@ -310,6 +331,8 @@ public function exhaustedCandidates(int $minRemainingDays, int $limit = 200, ?in
 
 - **后端**：迁移、模型 `TrafficCycle`、`TrafficCycleService`、改 `TrafficResetService`（`checkAndReset` 走 `rollover`、`performReset` 支持 `context` 且 0 不记、`calculateNextResetTime` 读周期）、`OrderService`、`UserObserver`/`PlanObserver`、`UserService::getResetDay`、礼品卡与后台重置带原因、`ResetTraffic` 命令的 `--fix-null/--force` 改用周期、新命令 `traffic:cycle-bootstrap`（§10.2）、订单截止时间、接口与测试。
 - **TrafficReset 插件 1.2.0**：有 `TrafficCycleService` 时，策略判断后调用 `advance()`，JSONL 审计日志沿用原格式并加 `cycle` 字段（`closed_cycle_id/new_cycle_id/quota_before/quota_after/shift_seconds/reset_log_id`）；新增配置 `min_remaining_days`（默认 30）；注册 `traffic_cycle.advance_policy`。没有核心服务时退回原逻辑。
+- **TrafficReset 插件 1.2.1**（配合 §3.7 结算）：有核心服务时 `traffic.process.before` 不再换时，改为监听 `traffic.process.after`（记账之后，按数据库里的已用量判断），`pending_bytes` 固定为 0；扫描按用户 ID 分页、只对失败的用户节流；JSONL 的 `before/after` 取核心锁内快照（`group_id`、`banned` 仍取插件读数），`cycle` 加 `cleared`、`carried`。
+- **AiTicketReply 1.7.21**：重置记录行在 `carried > 0` 时注明超出额度的部分计入新周期；JSONL 行带“结算”（旧周期清零量、带入新周期的用量）。
 - **AiTicketReply**：新增【流量周期】上下文（当前周期、后续排期、换时规则与资格、最近周期、最近重置记录及日志 ID 的中文解读），开关 `enable_traffic_cycle_context`（默认开，不写库）。
 - **Admin Next**：重做“流量重置记录”页（默认隐藏噪声、原因说人话、到期/额度变化、按用户看周期时间线）；用户编辑抽屉加“周期影响”预览和选项；用户操作加“流量周期”；分配订单加“支付有效期”；订单显示截止时间。
 - **LiquidNext / ez**：新增“流量周期”页（当前周期、后续排期、换时规则、历史周期、重置记录），仪表盘流量卡显示周期信息与入口；订单显示支付截止时间。接口 404 时显示“暂未开放”，不报错。

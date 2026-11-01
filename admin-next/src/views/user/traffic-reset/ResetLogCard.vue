@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { NButton, NIcon } from 'naive-ui'
 import { ChevronDownOutline } from '@vicons/ionicons5'
 import { formatBytes } from '@/utils/format'
-import { reasonMeta } from '../traffic-cycle/meta'
+import { carriedText, reasonMeta } from '../traffic-cycle/meta'
 import { shortTime } from '../login-log/meta'
 import type { ResetLogView } from './normalize'
 import ResetReasonCell from './ResetReasonCell.vue'
@@ -38,7 +38,10 @@ const hasLinks = computed(() => !!(props.log.cycleId || props.log.orderId || pro
     <div class="rgrid">
       <div class="cell">
         <span class="k">清零</span>
-        <span class="cleared" :class="{ zero: !log.cleared }">{{ formatBytes(log.cleared) }}</span>
+        <span class="cleared" :class="{ zero: !log.cleared }">
+          {{ formatBytes(log.cleared) }}
+          <span v-if="log.carried > 0" class="carried">{{ carriedText(log.carried) }}</span>
+        </span>
       </div>
       <div v-if="hasQuota" class="cell">
         <span class="k">额度</span>
@@ -181,6 +184,12 @@ const hasLinks = computed(() => !!(props.log.cycleId || props.log.orderId || pro
   font-variant-numeric: tabular-nums;
 }
 .cleared.zero {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.carried {
+  margin-left: 6px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--text-muted);
 }
