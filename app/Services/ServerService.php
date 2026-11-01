@@ -111,6 +111,25 @@ class ServerService
         return HookManager::filter('server.users.get', $users, $node);
     }
 
+    /**
+     * Whether getAvailableUsers() lists this user on the nodes of its group: the same conditions, minus the
+     * per-node group membership and 'server.users.get' filter. Delta pushes decide add/remove with this so a
+     * push never disagrees with the full list a node pulls (User::isAvailable() also requires a plan).
+     */
+    public static function isUserServable(User $user): bool
+    {
+        if ($user->group_id === null || $user->banned) {
+            return false;
+        }
+        if ($user->u === null || $user->d === null || $user->transfer_enable === null) {
+            return false; // NULL never passes 'u + d < transfer_enable'
+        }
+        if ((int) $user->u + (int) $user->d >= (int) $user->transfer_enable) {
+            return false;
+        }
+        return $user->expired_at === null || (int) $user->expired_at >= time();
+    }
+
     // 获取路由规则
     public static function getRoutes(array $routeIds)
     {

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\V2\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\PlanSave;
+use App\Jobs\NodeGroupSyncJob;
 use App\Models\Order;
 use App\Models\Plan;
 use App\Models\User;
@@ -43,9 +44,20 @@ class PlanController extends Controller
                 return $this->fail([400202, '该订阅不存在']);
             }
             
+            $syncGroupIds = [];
             DB::beginTransaction();
             try {
                 if ($request->input('force_update')) {
+                    // The bulk update fires no model events, so the nodes are resynced below: every group the
+                    // plan's users leave (their current groups, the plan's old group) and the one they join.
+                    // Locked, so a user joining the plan concurrently waits and cannot leave its old group unsynced.
+                    $syncGroupIds = User::where('plan_id', $plan->id)
+                        ->whereNotNull('group_id')
+                        ->lockForUpdate()
+                        ->pluck('group_id')
+                        ->unique()
+                        ->push($plan->group_id, $params['group_id'] ?? null)
+                        ->all();
                     User::where('plan_id', $plan->id)->update([
                         'group_id' => $params['group_id'],
                         'transfer_enable' => $params['transfer_enable'] * 1073741824,
@@ -55,12 +67,16 @@ class PlanController extends Controller
                 }
                 $plan->update($params);
                 DB::commit();
-                return $this->success(true);
             } catch (\Exception $e) {
                 DB::rollBack();
                 Log::error($e);
                 return $this->fail([500, '保存失败']);
             }
+            // After commit, queued: one job pushes the full list (a replace, carrying the new speed and device limits)
+            // once to each online node of these groups, without holding this request for every node's user query.
+            // It never throws, so a queue failure cannot turn the committed save into an error.
+            NodeGroupSyncJob::dispatchForGroups($syncGroupIds);
+            return $this->success(true);
         }
         if (!Plan::create($params)) {
             return $this->fail([500, '创建失败']);

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\UserGenerate;
 use App\Http\Requests\Admin\UserSendMail;
 use App\Http\Requests\Admin\UserUpdate;
+use App\Jobs\NodeGroupSyncJob;
 use App\Jobs\SendEmailJob;
 use App\Models\Plan;
 use App\Models\TrafficCycle;
@@ -698,16 +699,46 @@ class UserController extends Controller
             $builder->whereIn('id', $userIds);
         } // all: ignore filter/sort
 
+        // Walk the matched users by id (the filters may use top-level OR, so they are wrapped as an id subquery),
+        // banning each chunk, dropping its sessions like a single ban does, and noting the groups to resync.
+        $groupIds = [];
         try {
-            $builder->update([
-                'banned' => 1
-            ]);
+            User::query()
+                ->whereIn('id', (clone $builder)->reorder()->select('id'))
+                ->select(['id', 'group_id'])
+                ->chunkById(500, function ($users) use (&$groupIds) {
+                    $ids = $users->pluck('id')->all();
+                    User::whereIn('id', $ids)->update(['banned' => 1]);
+                    // noted as soon as the chunk is banned, so a failure below still resyncs it
+                    foreach ($users as $user) {
+                        $groupIds[(int) $user->group_id] = $user->group_id;
+                    }
+                    $this->removeSessionsOf($ids);
+                });
         } catch (\Exception $e) {
             Log::error($e);
+            NodeGroupSyncJob::dispatchForGroups($groupIds); // chunks banned before the failure; never throws
             return $this->fail([500, '处理失败']);
         }
-        // Full refresh not implemented.
+        // The bulk update fires no model events: push the affected groups' full lists (a replace, which drops the
+        // banned users) from the queue instead of querying every node's list inside this request. Never throws,
+        // so a queue failure cannot turn the committed ban into an error.
+        NodeGroupSyncJob::dispatchForGroups($groupIds);
         return $this->success(true);
+    }
+
+    /**
+     * Bulk form of AuthService::removeAllSessions().
+     *
+     * @param int[] $userIds
+     */
+    private function removeSessionsOf(array $userIds): void
+    {
+        $tokens = (new User())->tokens();
+        $tokens->getRelated()->newQuery()
+            ->where($tokens->getMorphType(), $tokens->getMorphClass())
+            ->whereIn($tokens->getQualifiedForeignKeyName(), $userIds)
+            ->delete();
     }
 
     // Delete user and related data.

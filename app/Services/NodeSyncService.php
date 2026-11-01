@@ -35,12 +35,31 @@ class NodeSyncService
     }
 
     /**
-     * Push all users to all nodes in the group
+     * Push all users to all nodes in the group. Offline nodes are skipped before their user list is queried;
+     * they get the full list when they reconnect. Callers in web requests queue NodeGroupSyncJob instead.
      */
     public static function notifyUsersUpdatedByGroup(int $groupId): void
     {
-        $servers = Server::whereJsonContains('group_ids', (string) $groupId)
-            ->get();
+        self::notifyUsersUpdatedByGroups([$groupId]);
+    }
+
+    /**
+     * Push the full user list once to every online node serving any of the groups: a node in several of them
+     * gets one list, not one per group.
+     *
+     * @param int[] $groupIds
+     */
+    public static function notifyUsersUpdatedByGroups(array $groupIds): void
+    {
+        if ($groupIds === []) {
+            return;
+        }
+
+        $servers = Server::where(function ($query) use ($groupIds) {
+            foreach ($groupIds as $groupId) {
+                $query->orWhereJsonContains('group_ids', (string) $groupId);
+            }
+        })->get()->unique('id');
 
         foreach ($servers as $server) {
             if (!self::isNodeOnline($server->id))
@@ -64,7 +83,8 @@ class NodeSyncService
             if (!self::isNodeOnline($server->id))
                 continue;
 
-            if ($user->isAvailable()) {
+            // Same rule as the full list (REST pull, sync.users), so a delta never flips what a pull restores.
+            if (ServerService::isUserServable($user)) {
                 self::push($server->id, 'sync.user.delta', [
                     'action' => 'add',
                     'users' => [

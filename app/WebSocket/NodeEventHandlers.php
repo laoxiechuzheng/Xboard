@@ -151,7 +151,10 @@ class NodeEventHandlers
     }
 
     /**
-     * Push full config + users to newly connected node
+     * Push full config + users to a newly authenticated connection. Only that
+     * connection: other connections of the same node already hold the state, and
+     * re-sending each of them a full list on every sibling (re)connect multiplies
+     * the traffic during a ws-server restart.
      */
     public static function pushFullSync(TcpConnection $conn, Server $node): void
     {
@@ -159,13 +162,13 @@ class NodeEventHandlers
 
         // Push config
         $config = ServerService::buildNodeConfig($node);
-        NodeRegistry::send($nodeId, 'sync.config', [
+        NodeRegistry::sendTo($conn, $nodeId, 'sync.config', [
             'config' => $config,
         ]);
 
         // Push users
         $users = ServerService::getAvailableUsers($node)->toArray();
-        NodeRegistry::send($nodeId, 'sync.users', [
+        NodeRegistry::sendTo($conn, $nodeId, 'sync.users', [
             'users' => $users,
         ]);
 

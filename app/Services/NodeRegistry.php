@@ -90,22 +90,29 @@ class NodeRegistry
         }
 
         foreach ($conns as $conn) {
-            $payloadData = $data;
-
-            // Machine-mode connections multiplex multiple node IDs through the same
-            // socket, so node-scoped events must carry node_id for the client mux.
-            if (!empty($conn->machineNodeIds) && $event !== 'sync.nodes' && !array_key_exists('node_id', $payloadData)) {
-                $payloadData['node_id'] = $nodeId;
-            }
-
-            $conn->send(json_encode([
-                'event' => $event,
-                'data' => $payloadData,
-                'timestamp' => time(),
-            ]));
+            self::sendTo($conn, $nodeId, $event, $data);
         }
 
         return true;
+    }
+
+    /**
+     * Send a node-scoped JSON message to one connection only, e.g. the full sync
+     * owed to a connection that just authenticated (its siblings already have it).
+     */
+    public static function sendTo(TcpConnection $conn, int $nodeId, string $event, array $data): bool
+    {
+        // Machine-mode connections multiplex multiple node IDs through the same
+        // socket, so node-scoped events must carry node_id for the client mux.
+        if (!empty($conn->machineNodeIds) && $event !== 'sync.nodes' && !array_key_exists('node_id', $data)) {
+            $data['node_id'] = $nodeId;
+        }
+
+        return $conn->send(json_encode([
+            'event' => $event,
+            'data' => $data,
+            'timestamp' => time(),
+        ])) !== false;
     }
 
     /**
