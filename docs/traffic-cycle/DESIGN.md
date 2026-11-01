@@ -1,6 +1,6 @@
 # 流量周期账本（Traffic Cycle）设计与接口约定
 
-> 状态：2026-11-01 已上线三站。之后的修改（尚未部署）：§3.3 不重置套餐随到期延长、§3.7 换时结算（`carried`）与 `traffic.process.after`、扫描分页、§4.3 事件裁剪保留到期事件、§7.2 用户重置历史带账本字段。本文件是后端、Admin Next、LiquidNext、ez 主题、TrafficReset 插件、AiTicketReply 插件共同的接口约定。改接口先改本文件。
+> 状态：2026-11-01 已上线三站。同日 10:57–11:02 又上线（master `7ad21e3`）：§3.3 不重置套餐随到期延长、§3.7 换时结算（`carried`）与 `traffic.process.after`、扫描分页、§4.3 事件裁剪保留到期事件、§7.2 用户重置历史带账本字段。本文件是后端、Admin Next、LiquidNext、ez 主题、TrafficReset 插件、AiTicketReply 插件共同的接口约定。改接口先改本文件。
 
 ## 1. 要解决的问题
 
