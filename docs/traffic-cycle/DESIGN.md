@@ -134,10 +134,13 @@ advanceEligibility(user, minRemainingDays):
   - `carried ≥ 新 quota` 时换时后仍是用尽状态。`advance()` 不在内部循环，下一次记账触发或每分钟扫描会再换一次，那是用户的真实用量，照常进行（不限制每天的换时次数，不设冷却）。
 - **换时一定写日志**：即使清零量为 0（额度为 0 时；到期时间变了，必须可追溯），是 §4.2“清零量为 0 不写日志”的唯一例外。
 - **锁内复核是否用尽**：总是在锁住用户行后检查 `U + D + pending_bytes ≥ Q`（`trigger.pending_bytes` 不传按 0），不满足返回 `not_exhausted`，什么都不改。防止并发或过时的触发把刚开启的新周期作废、到期再前移一整个周期。`pending_bytes` 只为兼容 TrafficReset 1.2.0（它在上报记账**之前**换时、传本次上报量；跨过额度的那次上报换时时 `U + D < Q`，`carried = 0`，本次上报随后整笔记到新周期，与 1.2.0 原行为相同）。1.2.1 在记账之后触发，固定传 0。核心里没有其他调用方，没有“未用尽也换时”的选项。
+- **锁内拒绝封禁用户**：锁住用户行后先看 `banned`，已封禁返回 `banned`，什么都不改（上报入队后才被封禁的用户不前移到期；定时滚动和扫描名单同样跳过封禁用户）。解封后照常判断。
 - **触发**（插件）：
   - 节点上报**记账之后**：`TrafficFetchJob` 按“上报量 × 节点倍率”加到 `u / d` 后调用 `traffic.process.after`（§6），TrafficReset 1.2.1 对本批里已用尽的用户换时。不在 `traffic.process.before` 里换时，否则本次上报里旧额度内的部分会在新周期再算一次。
   - 续费订单开通后（`auto_reset_on_renewal`）。
-  - **每分钟扫描**已经用尽的用户（`sweep_exhausted`，默认开）。节点只给 `u + d < transfer_enable` 的用户下发，用户一旦用尽就再也没有上报，续费、管理员延长到期、插件后来才开启、`carried` 超过新额度、面板还没有 `traffic.process.after` 钩子等情况只能靠扫描。扫描名单由核心给出：`exhaustedCandidates(minRemainingDays, limit, now, afterId)` = 已用尽、未封禁、额度 > 0、`E ≥ now + minRemainingDays 天`、当前周期未到点且不是最终周期，按用户 ID 升序，`afterId` 给出时只取 `id > afterId`。插件每次最多处理 100 人，把最后一个 ID 记在缓存里，下次接着扫；不足一页就从头开始，排在前面一直换不成的用户不会挡住后面的人。只有换时失败（`failed` / 异常）的用户一小时内不再扫；资格不符（`skipped`）的由插件按资格状态节流（状态一变立即重新判断），`not_exhausted` 不节流。
+  - **每分钟扫描**已经用尽的用户（`sweep_exhausted`，默认开）。节点只给 `u + d < transfer_enable` 的用户下发，用户一旦用尽就再也没有上报，续费、管理员延长到期、插件后来才开启、`carried` 超过新额度、面板还没有 `traffic.process.after` 钩子等情况只能靠扫描。扫描名单由核心给出：`exhaustedCandidates(minRemainingDays, limit, now, afterId)` = 已用尽、未封禁、额度 > 0、`E ≥ now + minRemainingDays 天`、当前周期未到点且不是最终周期，按用户 ID 升序，`afterId` 给出时只取 `id > afterId`。插件每次最多处理 100 人，把最后一个 ID 记在缓存里，下次接着扫；不足一页就从头开始，排在前面一直换不成的用户不会挡住后面的人。只有换时失败（`failed` / 异常）的用户一小时内不再扫；资格不符（`skipped`）的由插件按资格状态节流（套餐、额度、到期、下次重置、封禁、`min_remaining_days` 任一变化立即重新判断），`not_exhausted` 不节流。
+- **节点同步**：`check:traffic-exceeded` 先读出超额用户再推送 `remove`；读之后才恢复额度的用户（换时、续费、管理员修改）的 `add` 可能被这条 `remove` 盖掉。推送之后它按当前状态重读这批用户，已不再超额的再派一次 `NodeUserSyncJob`（按当时状态推 `add` / `remove`），这次同步排在 `remove` 之后；重读之后才提交的修改由它自己提交后的同步覆盖。
+- **插件状态**：后台启用 / 停用插件或保存插件配置时，核心发出 `queue:restart` 信号（`PluginManager::restartQueueWorkers()`），常驻队列 worker（Horizon、AI 工单 worker）处理完当前任务后重启，按新的插件状态注册钩子。TrafficReset 的监听器、扫描和 `traffic_cycle.advance_policy` 在常驻进程里每次都先按 `v2_plugins` 读当前开关和配置。
 
 例（工单 #6982 的理想结果）：特殊周期 `[10-31 23:03, 12-01 23:59:59]` 40GB，续费后 E = 01-01 23:59:59。11-20 12:00 用尽 → shift 11.5 天 → E' = 12-21 12:00，新周期 `[11-20 12:00, 12-21 12:00]`，额度恢复 100GB。
 
@@ -236,7 +239,7 @@ advanceEligibility(user, minRemainingDays):
 | `admin_usage_edit` | log | 管理员修改了已用流量 |
 | `order_reset` | log（旧记录推断） | 订单开通时清零（新购或换套餐） |
 
-换时资格 `advance.reason`：`eligible` / `no_cycle` / `no_expiry` / `final_cycle`（本周期就是最后一个周期）/ `remaining_too_short`（剩余有效期不足）/ `disabled`（插件未启用、该重置方式未开启，或额度为 0）。`advance()` 另可能返回 `not_exhausted`（§3.7 锁内复核时并未用尽）。
+换时资格 `advance.reason`：`eligible` / `no_cycle` / `no_expiry` / `final_cycle`（本周期就是最后一个周期）/ `remaining_too_short`（剩余有效期不足）/ `disabled`（插件未启用、该重置方式未开启，或额度为 0）。`advance()` 另可能返回 `not_exhausted`（§3.7 锁内复核时并未用尽）或 `banned`（§3.7 用户已封禁）。
 
 重置日志 `metadata.trigger.source`（插件写入）：`traffic_report` 节点上报、`renewal_order` 续费订单、`sweep` 定时扫描已用尽的用户；JSONL 审计日志的 `trigger.source` 相同。
 

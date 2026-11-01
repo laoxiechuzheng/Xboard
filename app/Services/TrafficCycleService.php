@@ -186,6 +186,11 @@ class TrafficCycleService
         $result = DB::transaction(function () use ($user, $trigger, $minRemainingDays, $now, $refused) {
             $this->lockUser($user);
             $before = $this->snapshot($user);
+            // a ban that landed after the report was queued: never pull a banned user's expiry forward
+            // (the sweep and the scheduled rollover skip banned users the same way)
+            if ((int) $user->banned === 1) {
+                return $refused('banned', $before);
+            }
             $cycle = $this->reconcileLocked($user, $now);
             $check = $this->eligibility($user, $cycle, $minRemainingDays, $now);
             if (!$check['eligible']) {

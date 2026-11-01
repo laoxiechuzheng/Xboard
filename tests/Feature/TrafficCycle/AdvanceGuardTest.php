@@ -58,6 +58,28 @@ class AdvanceGuardTest extends TrafficCycleTestCase
         $this->assertTrue($third['ok']);
     }
 
+    public function test_a_user_banned_after_the_report_was_queued_is_not_advanced(): void
+    {
+        $user = $this->subscriber();
+        $this->at('2026-09-25 10:00:00');
+        $expiry = (int) $user->expired_at;
+        // the trigger still holds the row as it was before the ban
+        $queued = User::find($user->id);
+        User::whereKey($user->id)->update(['banned' => 1]);
+
+        $result = $this->cycles()->advance($queued, ['source' => 'traffic_report'], 30);
+        $this->assertFalse($result['ok']);
+        $this->assertSame('banned', $result['reason']);
+        $this->assertSame($expiry, (int) $user->refresh()->expired_at);
+        $this->assertSame(100 * self::GB, (int) $user->u + (int) $user->d);
+        $this->assertSame([], $this->logsOf($user));
+        $this->assertCount(1, $this->cyclesOf($user));
+
+        // once unbanned it advances as usual
+        User::whereKey($user->id)->update(['banned' => 0]);
+        $this->assertTrue($this->cycles()->advance($user->refresh(), ['source' => 'traffic_report'], 30)['ok']);
+    }
+
     public function test_advance_needs_the_user_to_be_exhausted_under_the_lock(): void
     {
         $user = $this->subscriber(Plan::PERIOD_QUARTERLY, 0);

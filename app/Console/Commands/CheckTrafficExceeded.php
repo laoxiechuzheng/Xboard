@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\NodeUserSyncJob;
 use App\Models\Server;
 use App\Models\User;
 use App\Services\NodeSyncService;
@@ -58,6 +59,36 @@ class CheckTrafficExceeded extends Command
             }
         }
 
-        $this->info("Checked " . count($pendingUserIds) . " users, notified {$notifiedCount} nodes for " . $exceededUsers->count() . " exceeded users.");
+        $restored = $this->resyncRestored($exceededUsers->pluck('id')->all());
+
+        $this->info("Checked " . count($pendingUserIds) . " users, notified {$notifiedCount} nodes for " . $exceededUsers->count() . " exceeded users"
+            . ($restored ? ", resynced {$restored} no longer exceeded." : "."));
+    }
+
+    /**
+     * The exceeded list was read before the removals went out. A user whose quota came back in between
+     * (a cycle advance, a renewal, an admin edit) already had its "add" pushed by NodeUserSyncJob, which the
+     * removal above then overrode. Read those users again now that the removals are published: any that are
+     * no longer exceeded get one more sync with their current state, which reaches the nodes after the removal.
+     * A change that commits after this read dispatches its own sync after commit, so it also lands after the removal.
+     */
+    private function resyncRestored(array $userIds): int
+    {
+        if (!$userIds) {
+            return 0;
+        }
+        $stillExceeded = User::toBase()
+            ->whereIn('id', $userIds)
+            ->whereRaw('u + d >= transfer_enable')
+            ->where('transfer_enable', '>', 0)
+            ->where('banned', 0)
+            ->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->all();
+        $restored = array_values(array_diff($userIds, $stillExceeded));
+        foreach ($restored as $id) {
+            NodeUserSyncJob::dispatch((int) $id, 'updated');
+        }
+        return count($restored);
     }
 }

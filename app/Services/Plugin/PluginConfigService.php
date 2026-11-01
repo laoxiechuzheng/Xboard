@@ -69,6 +69,7 @@ class PluginConfigService
                 'config' => json_encode($values),
                 'updated_at' => now()
             ]);
+        PluginManager::restartQueueWorkers();
 
         return true;
     }

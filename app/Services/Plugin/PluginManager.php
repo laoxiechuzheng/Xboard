@@ -4,6 +4,7 @@ namespace App\Services\Plugin;
 
 use App\Models\Plugin;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\View;
@@ -384,8 +385,24 @@ class PluginManager
             ]);
         // 初始化插件
         $plugin->boot();
+        self::restartQueueWorkers();
 
         return true;
+    }
+
+    /**
+     * Long-lived queue workers (Horizon, the AI ticket worker) boot the enabled plugins once and keep their hooks
+     * for life, so a plugin enabled, disabled or reconfigured in the admin would otherwise only take effect there
+     * after a restart. This is what `php artisan queue:restart` does: each worker exits after its current job and
+     * is started again (Horizon respawns it, Docker restarts the AI worker) with the plugins as they are now.
+     */
+    public static function restartQueueWorkers(): void
+    {
+        try {
+            Cache::forever('illuminate:queue:restart', now()->getTimestamp());
+        } catch (\Throwable $e) {
+            Log::warning('Plugin change: could not signal the queue workers to restart', ['error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -406,6 +423,7 @@ class PluginManager
             ]);
 
         $plugin->cleanup();
+        self::restartQueueWorkers();
 
         return true;
     }
