@@ -6,6 +6,8 @@
 >
 > **换时精确结算已上线**：2026-11-01 10:57–11:02 三站（yzy → mg → 98k）换成 `ghcr.io/laoxiechuzheng/xboard@sha256:3050a88a5843e2921e09d3e56715173498683603b66a4517f91deff09e88dfe6`（CI 运行 41267024614，master `7ad21e3`），同时 TrafficReset 1.2.1 / AiTicketReply 1.7.21；之后 LiquidNext 1.2.1 与 ez 新版上线。内容：换时结算（旧周期正好扣满额度，超出部分 `carried` 计入新周期，`advance()` 总在锁内复核是否用尽）、`TrafficFetchJob` 记账后的 `traffic.process.after` 钩子、不重置套餐的最终周期随到期延长、周期事件裁剪时保留到期事件、扫描名单分页 `afterId`、后台用户重置历史带账本字段（DESIGN §3.3、§3.7、§4.3、§6、§7.2）。上线前 PHPUnit 92 个测试（新增 10 个）和插件检查（formatter 140、cycle 75、legacy 17、ledger 38）在一次性容器里全部通过。发布脚本：工作机 `work/xboard-cycle-test/server/release-20261102/release.sh`（各站 `backups/2026-11-01-advance-carry/` 有副本、日志和回滚步骤）。
 >
+> **第二轮复核修复已上线**：2026-11-01 14:31–14:35 三站（yzy → mg → 98k）换成 `ghcr.io/laoxiechuzheng/xboard@sha256:011e9edc58e364ca3cda39a54a6ec089e72a36975b0f0ae1137195a878302ae7`（CI 运行 41280107013，master `e3a8f54`），同时 TrafficReset 1.2.2（AiTicketReply 仍 1.7.21）；之后 LiquidNext 1.2.2、ez `971ec35`。内容：`check:traffic-exceeded` 推送 remove 后按当前状态重读，读后才恢复额度的用户再派一次 `NodeUserSyncJob`；`advance()` 锁内拒绝封禁用户（`banned`）；后台启停 / 保存插件配置发 `queue:restart`（DESIGN §3.7）。验证：PHPUnit 97 项通过；插件检查 formatter 140、cycle 87、ledger 45、legacy 19（旧镜像）通过；三站发布门禁全过，Web 中断 32 / 31 / 28 秒，上线后无新报错。生产首笔新逻辑换时：mg 日志 30553（用户 4619，13:34:33），旧周期正好 50 GB，结转 0.031 GB。回滚：各站 `backups/2026-11-01-round2-fixes/README.txt`。
+>
 > 规则和接口约定见 [DESIGN.md](DESIGN.md)（改接口先改它）。本文件只讲上线、核对、日常运维、回滚和已知问题。
 
 ## 1. 它做什么
