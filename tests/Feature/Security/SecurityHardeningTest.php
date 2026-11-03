@@ -20,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Sanctum\Sanctum;
@@ -156,6 +157,67 @@ class SecurityHardeningTest extends TestCase
         $this->assertContains('127.0.0.0/8', $proxies);
         $this->assertContains('172.64.0.0/13', $proxies);
         $this->assertContains(self::MIRROR, $proxies);
+    }
+
+    public function test_wildcard_trusted_proxies_fall_back_to_the_legacy_mode(): void
+    {
+        Log::spy();
+        foreach (['*', '**', 'private,*,' . self::MIRROR, ' 0.0.0.0/0 '] as $value) {
+            config(['trustedproxy.proxies' => $value]);
+            $this->assertSame(TrustProxies::LEGACY_TRUST_ALL, TrustProxies::configuredProxies(), $value);
+            $this->assertTrue(TrustProxies::trustsEveryone(), $value);
+        }
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains($message, "'*'"));
+
+        // and so the per-IP limit stays off: no site-wide 429 on the shared 127.0.0.1 hop
+        config(['trustedproxy.proxies' => '*', 'auth.login_ip_throttle.max_failures' => 2]);
+        admin_setting(['password_limit_enable' => 0]);
+        $this->makeUser(['email' => 'real@example.com']);
+        for ($i = 0; $i < 4; $i++) {
+            $this->loginVia('1.2.3.4', "nobody{$i}@example.com", 'password')->assertStatus(400);
+        }
+        $this->loginVia('1.2.3.4', 'real@example.com', 'password')->assertOk();
+    }
+
+    public function test_unknown_trusted_proxy_entries_are_dropped_and_logged(): void
+    {
+        Log::spy();
+        config(['trustedproxy.proxies' => 'private,clodflare,' . self::MIRROR . ',10.1.0.0/40,2001:db8::/48,not-an-ip-' . __LINE__]);
+        $proxies = TrustProxies::configuredProxies();
+        $this->assertContains('127.0.0.0/8', $proxies);
+        $this->assertContains(self::MIRROR, $proxies);
+        $this->assertContains('2001:db8::/48', $proxies);
+        $this->assertNotContains('clodflare', $proxies);
+        $this->assertNotContains('10.1.0.0/40', $proxies);
+        $this->assertFalse(TrustProxies::trustsEveryone());
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains($message, "'clodflare'"));
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains($message, "'10.1.0.0/40'"));
+
+        // nothing usable left: legacy mode rather than an empty (or bogus) list
+        config(['trustedproxy.proxies' => 'cloudfare-typo-' . __LINE__]);
+        $this->assertSame(TrustProxies::LEGACY_TRUST_ALL, TrustProxies::configuredProxies());
+    }
+
+    public function test_loopback_and_private_ips_are_never_ip_limited_even_if_private_is_missing(): void
+    {
+        // "private" forgotten: Caddy's 127.0.0.1 hop is untrusted, so every request resolves to 127.0.0.1
+        config(['trustedproxy.proxies' => 'cloudflare,' . self::MIRROR, 'auth.login_ip_throttle.max_failures' => 3]);
+        admin_setting(['password_limit_enable' => 0]);
+        $this->makeUser(['email' => 'real@example.com']);
+
+        for ($i = 0; $i < 6; $i++) {
+            $this->loginVia('1.2.3.4, ' . self::MIRROR, "nobody{$i}@example.com", 'password')->assertStatus(400);
+        }
+        $this->loginVia('9.9.9.9, ' . self::MIRROR, 'real@example.com', 'password')->assertOk();
+
+        foreach (['127.0.0.1', '10.0.0.8', '172.18.0.2', '192.168.1.5', '::1', 'fd00::1'] as $ip) {
+            $request = Request::create('/', 'POST', [], [], [], ['REMOTE_ADDR' => $ip]);
+            $request->setTrustedProxies(TrustProxies::configuredProxies(), Request::HEADER_X_FORWARDED_FOR);
+            $this->assertNull(LoginService::throttleIp($request), $ip);
+        }
+        $request = Request::create('/', 'POST', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
+        $request->setTrustedProxies(TrustProxies::configuredProxies(), Request::HEADER_X_FORWARDED_FOR);
+        $this->assertSame('1.2.3.4', LoginService::throttleIp($request));
     }
 
     public function test_client_ip_is_the_right_most_untrusted_hop_once_proxies_are_configured(): void

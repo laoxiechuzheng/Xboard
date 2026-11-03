@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\GiftCardService;
 use App\Services\OrderService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -107,6 +108,24 @@ class OrderServiceConcurrencyTest extends TestCase
         $this->assertSame(100, $user->balance);
         $this->assertSame(1, $code->usage_count);
         $this->assertSame(1, $code->usages()->count());
+    }
+
+    public function test_payment_after_cancel_is_not_opened_and_is_logged(): void
+    {
+        $user = $this->makeUser(['balance' => 0]);
+        $order = $this->makeOrder($user, $this->makePlan(), ['status' => Order::STATUS_PENDING]);
+
+        $this->assertTrue((new OrderService(Order::findOrFail($order->id)))->cancel());
+
+        Log::spy();
+        // gateways keep getting "success" (no retry storm); the order stays cancelled and a warning is left for a human
+        $this->assertTrue((new OrderService(Order::findOrFail($order->id)))->paid('late-callback'));
+        $this->assertSame(Order::STATUS_CANCELLED, Order::findOrFail($order->id)->status);
+        $this->assertNull(User::findOrFail($user->id)->plan_id);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) => str_contains($message, 'cancelled order')
+                && ($context['trade_no'] ?? null) === $order->trade_no)
+            ->once();
     }
 
     public function test_checkout_rejects_negative_order_amount(): void

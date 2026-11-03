@@ -153,7 +153,7 @@ class LoginService
      *
      * Mirrors, CDNs and the panel's own proxies put many users behind one address. A request resolves to such
      * an address only when no untrusted hop is left in X-Forwarded-For (for example a mirror that did not
-     * forward the client IP), so trusted proxies are never limited. While TRUSTED_PROXIES is unset the client
+     * forward the client IP), so trusted proxies and loopback/private addresses are never limited. While TRUSTED_PROXIES is unset the client
      * IP is whatever the client wrote into X-Forwarded-For, so the limit stays off (no behaviour change).
      */
     public static function throttleIp(Request $request): ?string
@@ -163,6 +163,11 @@ class LoginService
         }
         $ip = $request->ip();
         if (!is_string($ip) || filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return null;
+        }
+        // Loopback / private addresses are this host's own nginx, Caddy and docker hops. They are exempt whatever
+        // TRUSTED_PROXIES says, so a list that forgets "private" cannot put every user on one 127.0.0.1 counter.
+        if (IpUtils::checkIp($ip, TrustProxies::PRIVATE_RANGES)) {
             return null;
         }
         $trusted = Request::getTrustedProxies();

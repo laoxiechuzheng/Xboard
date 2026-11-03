@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Illuminate\Http\Middleware\TrustProxies as Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class TrustProxies extends Middleware
 {
@@ -52,6 +53,15 @@ class TrustProxies extends Middleware
         return static::$alwaysTrustProxies ?: self::configuredProxies();
     }
 
+    /**
+     * Entries that mean "trust every hop". Symfony does not understand '*' / '**' inside a list, so they fall
+     * back to the legacy mode instead of silently becoming a bogus entry that leaves 127.0.0.1 untrusted.
+     */
+    private const TRUST_ALL_ENTRIES = ['*', '**', '0.0.0.0/0'];
+
+    /** @var array<string, true> warnings already logged by this worker (configuredProxies() runs per request) */
+    private static array $warned = [];
+
     public static function configuredProxies(): array
     {
         $configured = config('trustedproxy.proxies');
@@ -63,16 +73,49 @@ class TrustProxies extends Middleware
             if ($item === '') {
                 continue;
             }
+            if (in_array($item, self::TRUST_ALL_ENTRIES, true)) {
+                self::warnOnce("TRUSTED_PROXIES contains '{$item}': trusting every IPv4 hop as before (legacy mode, per-IP login limit off).");
+                return self::LEGACY_TRUST_ALL;
+            }
             if ($item === 'private') {
                 array_push($proxies, ...self::PRIVATE_RANGES);
             } elseif ($item === 'cloudflare') {
                 array_push($proxies, ...self::CLOUDFLARE_RANGES);
-            } else {
+            } elseif (self::isIpOrCidr($item)) {
                 $proxies[] = $item;
+            } else {
+                self::warnOnce("TRUSTED_PROXIES entry '{$item}' is neither an IP, a CIDR range nor a known keyword (private, cloudflare); ignored.");
             }
         }
 
         return $proxies ? array_values(array_unique($proxies)) : self::LEGACY_TRUST_ALL;
+    }
+
+    private static function isIpOrCidr(string $item): bool
+    {
+        $parts = explode('/', $item, 2);
+        $ip = $parts[0];
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+        if (!isset($parts[1])) {
+            return true;
+        }
+        $max = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? 128 : 32;
+        return ctype_digit($parts[1]) && (int) $parts[1] <= $max;
+    }
+
+    private static function warnOnce(string $message): void
+    {
+        if (isset(self::$warned[$message])) {
+            return;
+        }
+        self::$warned[$message] = true;
+        try {
+            Log::warning($message);
+        } catch (\Throwable) {
+            // logging must never break request handling
+        }
     }
 
     /**

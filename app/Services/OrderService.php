@@ -337,6 +337,13 @@ class OrderService
                     throw new \RuntimeException('Order not found.');
                 }
                 if ((int) $order->status !== Order::STATUS_PENDING) {
+                    if ((int) $order->status === Order::STATUS_CANCELLED) {
+                        // payment arrived after the order was cancelled: nothing is opened, a human has to settle it
+                        Log::warning('Payment callback for a cancelled order, not opened', [
+                            'trade_no' => $order->trade_no,
+                            'callback_no' => $callbackNo,
+                        ]);
+                    }
                     return [$order, false];
                 }
 
