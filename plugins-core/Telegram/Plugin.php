@@ -307,14 +307,14 @@ class Plugin extends AbstractPlugin
     if (isset($parsedUrl['query'])) {
       parse_str($parsedUrl['query'], $query);
       if (isset($query['token'])) {
-        return $query['token'];
+        return Helper::validateSubscriptionToken($query['token']);
       }
     }
 
     if (isset($parsedUrl['path'])) {
       $pathParts = explode('/', trim($parsedUrl['path'], '/'));
       $lastPart = end($pathParts);
-      return $lastPart ?: null;
+      return $lastPart ? Helper::validateSubscriptionToken($lastPart) : null;
     }
 
     return null;
@@ -388,6 +388,15 @@ class Plugin extends AbstractPlugin
   {
     $user = $this->getBoundUser($msg);
     if (!$user) {
+      return;
+    }
+
+    // Only admins and staff receive ticket notifications, so only they may answer one,
+    // and only by replying to the bot's own notification message.
+    if (!$user->is_admin && !$user->is_staff) {
+      return;
+    }
+    if (empty($msg->reply_from_bot)) {
       return;
     }
 

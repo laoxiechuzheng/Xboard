@@ -86,8 +86,20 @@ class User extends Authenticatable
     protected function email(): Attribute
     {
         return Attribute::make(
-            set: fn (string $value) => strtolower(trim($value)),
+            set: fn (string $value) => self::normalizeEmail($value),
         );
+    }
+
+    /**
+     * One email identity for storage, lookups and every per-email cache key (login failures, reset limits,
+     * verification codes), so case variants of one address share one counter.
+     *
+     * Same rule the email setter and byEmail() always used (ASCII lower-case + trim): stored mixed-case
+     * emails still match through the case-insensitive column collation, and no data migration is needed.
+     */
+    public static function normalizeEmail(string $email): string
+    {
+        return strtolower(trim($email));
     }
 
     /**
@@ -95,7 +107,7 @@ class User extends Authenticatable
      */
     public function scopeByEmail(Builder $query, string $email): Builder
     {
-        return $query->where('email', strtolower(trim($email)));
+        return $query->where('email', self::normalizeEmail($email));
     }
 
     // 获取邀请人信息

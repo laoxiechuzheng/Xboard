@@ -7,6 +7,25 @@ use Illuminate\Support\Arr;
 
 class Helper
 {
+    /**
+     * Accept a subscription token only when it is a plain string, so request input can never be type-juggled
+     * (an array or number bound into where('token', ...) matched other users' tokens: XB-01).
+     *
+     * The shape is deliberately the same contract the credential plugins use when they write tokens
+     * (1-64 bytes, valid UTF-8, no control characters) instead of a strict 32-hex pattern: live users carry
+     * 32-character alphanumeric tokens that are not hex, and restored tokens may be any non-control string.
+     */
+    public static function validateSubscriptionToken(mixed $token): ?string
+    {
+        if (!is_string($token) || $token === '' || strlen($token) > 64) {
+            return null;
+        }
+        if (preg_match('/[\x00-\x1F\x7F]/', $token) || !mb_check_encoding($token, 'UTF-8')) {
+            return null;
+        }
+        return $token;
+    }
+
     public static function uuidToBase64($uuid, $length)
     {
         return base64_encode(substr($uuid, 0, $length));

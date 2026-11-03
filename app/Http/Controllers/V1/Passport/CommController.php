@@ -26,6 +26,8 @@ class CommController extends Controller
         }
 
         $email = $request->input('email');
+        // cache keys use the normalized identity, so the code matches whatever case the user types later
+        $emailIdentity = User::normalizeEmail($email);
 
         // 检查白名单后缀限制
         if ((int) admin_setting('email_whitelist_enable', 0)) {
@@ -40,7 +42,7 @@ class CommController extends Controller
             }
         }
 
-        if (Cache::get(CacheKey::get('LAST_SEND_EMAIL_VERIFY_TIMESTAMP', $email))) {
+        if (Cache::get(CacheKey::get('LAST_SEND_EMAIL_VERIFY_TIMESTAMP', $emailIdentity))) {
             return $this->fail([400, __('Email verification code has been sent, please request again later')]);
         }
         $code = rand(100000, 999999);
@@ -57,8 +59,8 @@ class CommController extends Controller
             ]
         ]);
 
-        Cache::put(CacheKey::get('EMAIL_VERIFY_CODE', $email), $code, 300);
-        Cache::put(CacheKey::get('LAST_SEND_EMAIL_VERIFY_TIMESTAMP', $email), time(), 60);
+        Cache::put(CacheKey::get('EMAIL_VERIFY_CODE', $emailIdentity), $code, 300);
+        Cache::put(CacheKey::get('LAST_SEND_EMAIL_VERIFY_TIMESTAMP', $emailIdentity), time(), 60);
         return $this->success(true);
     }
 

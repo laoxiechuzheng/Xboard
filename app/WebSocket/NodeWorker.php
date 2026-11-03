@@ -183,7 +183,8 @@ class NodeWorker
 
     private function authenticateNode(TcpConnection $conn, array $params): void
     {
-        $token = $params['token'] ?? '';
+        // parse_str() turns token[]=... into an array: only a string can be a token
+        $token = is_string($params['token'] ?? null) ? $params['token'] : '';
         $nodeId = (int) ($params['node_id'] ?? 0);
 
         $serverToken = admin_setting('server_token', '');
@@ -232,7 +233,14 @@ class NodeWorker
     private function authenticateMachine(TcpConnection $conn, array $params): void
     {
         $machineId = (int) ($params['machine_id'] ?? 0);
-        $token = $params['token'] ?? '';
+        $token = is_string($params['token'] ?? null) ? $params['token'] : '';
+        if ($token === '') {
+            $conn->close(json_encode([
+                'event' => 'error',
+                'data' => ['message' => 'invalid machine credentials'],
+            ]));
+            return;
+        }
 
         $machine = ServerMachine::where('id', $machineId)
             ->where('token', $token)

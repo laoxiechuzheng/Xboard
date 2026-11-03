@@ -94,6 +94,8 @@ class TelegramController extends Controller
         if (isset($message['reply_to_message']['text'])) {
             $this->msg->message_type = 'reply_message';
             $this->msg->reply_text = $message['reply_to_message']['text'];
+            // ticket replies must answer a notification the bot sent, not a message a user typed
+            $this->msg->reply_from_bot = (bool) ($message['reply_to_message']['from']['is_bot'] ?? false);
         }
     }
 

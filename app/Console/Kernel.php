@@ -39,6 +39,8 @@ class Kernel extends ConsoleKernel
         // reset
         $schedule->command('reset:traffic')->everyMinute()->onOneServer()->withoutOverlapping(10);
         $schedule->command('reset:log')->daily()->onOneServer();
+        // drop Sanctum tokens that expired more than 24 h ago (the guard already refuses them)
+        $schedule->command('sanctum:prune-expired', ['--hours' => 24])->dailyAt('4:20')->onOneServer();
         // send
         $schedule->command('send:remindMail', ['--force'])->dailyAt('11:30')->onOneServer();
         // horizon metrics

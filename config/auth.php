@@ -100,4 +100,20 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Login failures per client IP
+    |--------------------------------------------------------------------------
+    |
+    | Failed passport logins (unknown email or wrong password) counted per resolved client IP, on top of the
+    | per-email limit in the admin settings. Only active once TRUSTED_PROXIES is configured, and never for an
+    | address that is itself a trusted proxy (mirrors, CDN, loopback). 0 disables it.
+    |
+    */
+
+    'login_ip_throttle' => [
+        'max_failures' => (int) env('LOGIN_IP_MAX_FAILURES', 30),
+        'decay_seconds' => (int) env('LOGIN_IP_DECAY_SECONDS', 600),
+    ],
+
 ];

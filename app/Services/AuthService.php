@@ -62,15 +62,33 @@ class AuthService
         return true;
     }
 
+    /**
+     * Resolve a Bearer token the same way the sanctum guard would: expired tokens and banned users get null.
+     * (Before, an expired token could still mint a quick-login URL and with it a fresh one-year token.)
+     */
     public static function findUserByBearerToken(string $bearerToken): ?User
     {
         $token = str_replace('Bearer ', '', $bearerToken);
-        
+
         $accessToken = PersonalAccessToken::findToken($token);
-        
-        $tokenable = $accessToken?->tokenable;
-        
-        return $tokenable instanceof User ? $tokenable : null;
+        if (!$accessToken) {
+            return null;
+        }
+
+        if ($accessToken->expires_at && $accessToken->expires_at->isPast()) {
+            return null;
+        }
+        $expiration = config('sanctum.expiration');
+        if ($expiration && $accessToken->created_at && $accessToken->created_at->lte(now()->subMinutes($expiration))) {
+            return null;
+        }
+
+        $tokenable = $accessToken->tokenable;
+        if (!$tokenable instanceof User || $tokenable->banned) {
+            return null;
+        }
+
+        return $tokenable;
     }
 
     /**

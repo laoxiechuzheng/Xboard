@@ -158,13 +158,18 @@ class LoginLogService
     }
 
     /**
-     * 真实客户端 IP：经 Cloudflare 时取 CF-Connecting-IP，否则取 X-Forwarded-For 最左侧（TrustProxies 信任全部代理）。
+     * 真实客户端 IP。
+     * 未配置 TRUSTED_PROXIES 时（信任全部代理）：经 Cloudflare 时取 CF-Connecting-IP，否则取 X-Forwarded-For 最左侧（旧行为）。
+     * 配置了 TRUSTED_PROXIES 后：取 Request::ip()，即 X-Forwarded-For 从右往左第一个不可信的地址；
+     * 此时不再采信 CF-Connecting-IP，因为不经 Cloudflare 的请求（直连、镜像）可以随意填写它。
      */
     public static function clientIp(Request $request): ?string
     {
-        $cf = trim((string) $request->header('CF-Connecting-IP'));
-        if ($cf !== '' && filter_var($cf, FILTER_VALIDATE_IP)) {
-            return $cf;
+        if (\App\Http\Middleware\TrustProxies::trustsEveryone()) {
+            $cf = trim((string) $request->header('CF-Connecting-IP'));
+            if ($cf !== '' && filter_var($cf, FILTER_VALIDATE_IP)) {
+                return $cf;
+            }
         }
         $ip = $request->ip();
         return $ip && filter_var($ip, FILTER_VALIDATE_IP) ? $ip : null;

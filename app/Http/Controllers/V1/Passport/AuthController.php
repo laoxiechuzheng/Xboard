@@ -81,7 +81,7 @@ class AuthController extends Controller
         $email = $request->input('email');
         $password = $request->input('password');
 
-        [$success, $result] = $this->loginService->login($email, $password);
+        [$success, $result] = $this->loginService->login($email, $password, LoginService::throttleIp($request));
 
         if (!$success) {
             return $this->fail($result);
@@ -98,6 +98,14 @@ class AuthController extends Controller
      */
     public function token2Login(Request $request)
     {
+        // token[]= / verify[]= used to reach string-typed code and end in a 500
+        foreach (['token', 'verify', 'redirect'] as $field) {
+            $value = $request->input($field);
+            if ($value !== null && !is_string($value)) {
+                return $this->fail([422, __('Invalid parameter')]);
+            }
+        }
+
         // 处理直接通过token重定向
         if ($token = $request->input('token')) {
             $redirect = '/#/login?verify=' . $token . '&redirect=' . ($request->input('redirect', 'dashboard'));
@@ -148,6 +156,13 @@ class AuthController extends Controller
     public function getQuickLoginUrl(Request $request)
     {
         $authorization = $request->input('auth_data') ?? $request->header('authorization');
+        if ($authorization !== null && !is_string($authorization)) {
+            return $this->fail([422, __('Invalid parameter')]);
+        }
+        $redirect = $request->input('redirect');
+        if ($redirect !== null && !is_string($redirect)) {
+            return $this->fail([422, __('Invalid parameter')]);
+        }
 
         if (!$authorization) {
             return response()->json([
